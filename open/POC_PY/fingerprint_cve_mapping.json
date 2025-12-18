@@ -1,0 +1,17 @@
+{
+  "d0fc76893876ebb1045ac23c84c3fe50": {
+    "fingerprint": "d0fc76893876ebb1045ac23c84c3fe50",
+    "cve_id": "CVE-2019-6340",
+    "description": null
+  },
+  "969019288afc81908e3222f1811d6f0c": {
+    "fingerprint": "969019288afc81908e3222f1811d6f0c",
+    "cve_id": "CVE-2019-6340",
+    "description": null
+  },
+  "c9b3c51ac7af7f38488236de28b803b4": {
+    "fingerprint": "c9b3c51ac7af7f38488236de28b803b4",
+    "cve_id": "CVE-2019-6340",
+    "description": null
+  }
+}

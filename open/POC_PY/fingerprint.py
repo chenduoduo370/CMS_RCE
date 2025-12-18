@@ -9,10 +9,21 @@
 import hashlib
 import re
 from html.parser import HTMLParser
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Tuple
 from urllib.parse import urljoin
 
 import requests
+
+try:
+    from fingerprint_cve_mapping import get_manager
+    _cve_manager = None
+    def _get_cve_manager():
+        global _cve_manager
+        if _cve_manager is None:
+            _cve_manager = get_manager()
+        return _cve_manager
+except ImportError:
+    _get_cve_manager = None
 
 
 def calculate_file_md5_from_url(url: str, timeout: float = 3.0) -> Optional[str]:
@@ -52,6 +63,30 @@ def get_file_md5(url: str, timeout: float = 3.0) -> Optional[str]:
         文件的MD5哈希值（32位十六进制字符串），如果获取失败则返回None
     """
     return calculate_file_md5_from_url(url, timeout)
+
+
+def get_file_md5_with_cve(url: str, timeout: float = 3.0) -> Tuple[Optional[str], Optional[str]]:
+    """
+    通过URL获取指定文件的MD5值，并查找对应的CVE。
+    
+    Args:
+        url: 文件的完整URL（如 http://192.168.1.1:80/core/CHANGELOG.txt）
+        timeout: 请求超时时间（秒）
+    
+    Returns:
+        元组(MD5哈希值, CVE编号)
+        如果MD5计算失败，MD5为None；如果找不到对应的CVE，CVE为None
+    """
+    md5_hash = calculate_file_md5_from_url(url, timeout)
+    cve_id = None
+    
+    # 如果计算出了MD5，尝试查找对应的CVE
+    if md5_hash:
+        cve_manager = _get_cve_manager() if _get_cve_manager else None
+        if cve_manager:
+            cve_id = cve_manager.get_cve(md5_hash)
+    
+    return (md5_hash, cve_id)
 
 
 class CSSLinkExtractor(HTMLParser):
@@ -105,18 +140,19 @@ def extract_css_links_from_html(html_content: str, base_url: str) -> List[str]:
     return parser.css_links
 
 
-def get_css_files_md5_from_page(page_url: str, timeout: float = 3.0) -> Dict[str, Optional[str]]:
+def get_css_files_md5_from_page(page_url: str, timeout: float = 3.0) -> Dict[str, Tuple[Optional[str], Optional[str]]]:
     """
-    访问指定页面，提取所有CSS文件链接，下载并计算每个CSS文件的MD5值。
+    访问指定页面，提取所有CSS文件链接，下载并计算每个CSS文件的MD5值，并查找对应的CVE。
     
     Args:
         page_url: 要访问的页面URL（如 http://192.168.1.1:80/）
         timeout: 请求超时时间（秒）
     
     Returns:
-        字典，键为CSS文件URL，值为MD5哈希值（如果下载失败则为None）
+        字典，键为CSS文件URL，值为元组(MD5哈希值, CVE编号)
+        如果MD5计算失败，MD5为None；如果找不到对应的CVE，CVE为None
     """
-    result: Dict[str, Optional[str]] = {}
+    result: Dict[str, Tuple[Optional[str], Optional[str]]] = {}
     
     try:
         # 访问页面
@@ -131,10 +167,19 @@ def get_css_files_md5_from_page(page_url: str, timeout: float = 3.0) -> Dict[str
         if not css_links:
             return result
         
-        # 下载每个CSS文件并计算MD5
+        # 获取CVE管理器（如果可用）
+        cve_manager = _get_cve_manager() if _get_cve_manager else None
+        
+        # 下载每个CSS文件并计算MD5，同时查找对应的CVE
         for css_url in css_links:
             md5_hash = calculate_file_md5_from_url(css_url, timeout)
-            result[css_url] = md5_hash
+            cve_id = None
+            
+            # 如果计算出了MD5，尝试查找对应的CVE
+            if md5_hash and cve_manager:
+                cve_id = cve_manager.get_cve(md5_hash)
+            
+            result[css_url] = (md5_hash, cve_id)
         
         return result
     except Exception:
@@ -144,6 +189,7 @@ def get_css_files_md5_from_page(page_url: str, timeout: float = 3.0) -> Dict[str
 __all__ = [
     "calculate_file_md5_from_url",
     "get_file_md5",
+    "get_file_md5_with_cve",
     "extract_css_links_from_html",
     "get_css_files_md5_from_page",
 ]

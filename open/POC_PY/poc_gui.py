@@ -18,7 +18,8 @@ try:
                                  QHBoxLayout, QTabWidget, QLabel, QLineEdit,
                                  QPushButton, QTextEdit, QFileDialog, QMessageBox,
                                  QComboBox, QSpinBox, QGroupBox, QFormLayout,
-                                 QProgressBar, QListWidget, QSplitter)
+                                 QProgressBar, QListWidget, QSplitter, QTableWidget,
+                                 QTableWidgetItem, QHeaderView, QDialog, QDialogButtonBox)
     from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
     from PyQt5.QtGui import QFont, QTextCursor
     PYQT5_AVAILABLE = True
@@ -28,22 +29,23 @@ except ImportError:
     print("请安装: pip install PyQt5")
     sys.exit(1)
 
-# 导入核心模块
-from poc_tool import (PayloadManager, generate_from_packet,
-                      read_packet_file, list_payloads)
+# 导入核心模块（已拆分）
+from payload_sender import PayloadManager, list_payloads
+from packet_generator import generate_from_packet, read_packet_file
 
 try:
-    # 指纹探测（是否有 Web / Drupal 等）
-    from fingerprint import fingerprint_and_select_poc
+    # CSS MD5计算功能
+    from fingerprint import get_file_md5, get_css_files_md5_from_page
 except ImportError:
-    fingerprint_and_select_poc = None
+    get_file_md5 = None
+    get_css_files_md5_from_page = None
 
 try:
-    # 指纹注册表（固有文件 -> PoC 函数）
-    from fingerprint_registry import add_fingerprint as fp_add_fingerprint, match_and_execute as fp_match_and_execute
+    # 指纹-CVE映射管理
+    from fingerprint_cve_mapping import get_manager, FingerprintCVEMapping
 except ImportError:
-    fp_add_fingerprint = None
-    fp_match_and_execute = None
+    get_manager = None
+    FingerprintCVEMapping = None
 
 
 class PayloadWorker(QThread):
@@ -97,13 +99,34 @@ class GenerateWorker(QThread):
             self.error.emit(str(e))
 
 
+class CSSMD5Worker(QThread):
+    """CSS MD5计算工作线程"""
+    finished = pyqtSignal(dict)
+    error = pyqtSignal(str)
+    
+    def __init__(self, page_url, timeout):
+        super().__init__()
+        self.page_url = page_url
+        self.timeout = timeout
+    
+    def run(self):
+        try:
+            if get_css_files_md5_from_page is None:
+                self.error.emit("CSS MD5功能未加载")
+                return
+            
+            result = get_css_files_md5_from_page(self.page_url, self.timeout)
+            self.finished.emit(result)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
 class MainWindow(QMainWindow):
     """主窗口"""
     
     def __init__(self):
         super().__init__()
         self.manager = PayloadManager(debug=False)
-        self._register_builtin_fingerprints()
         self.init_ui()
     
     def init_ui(self):
@@ -125,6 +148,15 @@ class MainWindow(QMainWindow):
         # Payload 列表标签页
         list_tab = self.create_list_tab()
         tabs.addTab(list_tab, "Payload 列表")
+        
+        # CSS MD5 标签页
+        css_md5_tab = self.create_css_md5_tab()
+        tabs.addTab(css_md5_tab, "CSS MD5 计算")
+        
+        # 指纹-CVE映射管理标签页
+        if get_manager is not None:
+            mapping_tab = self.create_fingerprint_tab()
+            tabs.addTab(mapping_tab, "指纹-CVE映射")
         
         self.setCentralWidget(tabs)
     
@@ -174,11 +206,6 @@ class MainWindow(QMainWindow):
         self.send_btn.clicked.connect(self.send_payload)
         button_layout.addWidget(self.send_btn)
 
-        # 指纹自动 POC 按钮（根据 IP 进行指纹识别并触发 PoC）
-        self.auto_btn = QPushButton("指纹自动 PoC")
-        self.auto_btn.clicked.connect(self.auto_fingerprint_poc)
-        button_layout.addWidget(self.auto_btn)
-        
         self.refresh_btn = QPushButton("刷新列表")
         self.refresh_btn.clicked.connect(self.refresh_payload_list)
         button_layout.addWidget(self.refresh_btn)
@@ -201,46 +228,6 @@ class MainWindow(QMainWindow):
         widget.setLayout(layout)
         return widget
 
-    def _register_builtin_fingerprints(self):
-        """
-        在 GUI 启动时注册内置的“固有文件指纹 -> PoC”映射。
-        与命令行逻辑保持一致：目前示例为 Drupal /core/CHANGELOG.txt -> CVE_2019_6340。
-        """
-        if fp_add_fingerprint is None:
-            return
-
-        def drupal_changelog_poc(target_info: dict):
-            """
-            通过文件指纹触发的 Drupal PoC。
-            target_info 约定包含：
-              - ip: 目标 IP
-              - port: 目标 Web 端口
-              - cmd: 要执行的命令
-              - timeout: 超时时间（秒）
-            """
-            ip = target_info.get("ip")
-            port = target_info.get("port")
-            cmd = target_info.get("cmd", "whoami")
-            timeout = int(target_info.get("timeout", 10))
-
-            if not ip or not port:
-                raise ValueError("指纹 PoC 缺少 ip 或 port 信息")
-
-            ip_port = f"{ip}:{port}"
-            manager = PayloadManager(debug=False)
-            return manager.send_payload("CVE_2019_6340", ip_port, cmd, timeout=timeout)
-
-        try:
-            fp_add_fingerprint(
-                fp_id="drupal_core_changelog",
-                file_path="/core/CHANGELOG.txt",
-                file_hash=None,
-                poc_function=drupal_changelog_poc,
-            )
-        except Exception:
-            # 已注册或其他错误时忽略，避免 GUI 因重复注册崩溃
-            pass
-    
     def create_generate_tab(self):
         """创建数据包生成标签页"""
         widget = QWidget()
@@ -255,21 +242,16 @@ class MainWindow(QMainWindow):
         self.cve_id_input.setPlaceholderText("例如: CVE-2024-XXXX")
         input_layout.addRow("CVE 编号:", self.cve_id_input)
         
-        # 数据包文件选择
+        # 数据包文件选择（仅文件，不支持手动粘贴内容）
         file_layout = QHBoxLayout()
         self.packet_file_input = QLineEdit()
         self.packet_file_input.setPlaceholderText("选择数据包文件...")
+        self.packet_file_input.setReadOnly(True)  # 禁止手动输入，必须选择文件
         file_btn = QPushButton("浏览...")
         file_btn.clicked.connect(self.select_packet_file)
         file_layout.addWidget(self.packet_file_input)
         file_layout.addWidget(file_btn)
         input_layout.addRow("数据包文件:", file_layout)
-        
-        # 数据包文本输入
-        self.packet_text = QTextEdit()
-        self.packet_text.setPlaceholderText("或直接在此输入 HTTP 数据包内容...")
-        self.packet_text.setMaximumHeight(150)
-        input_layout.addRow("数据包内容:", self.packet_text)
         
         # 输出目录
         output_layout = QHBoxLayout()
@@ -480,73 +462,275 @@ class MainWindow(QMainWindow):
         self.worker.error.connect(self.on_send_error)
         self.worker.start()
 
-    def auto_fingerprint_poc(self):
-        """使用指纹识别 + 指纹注册表，在 GUI 中自动选择并发送 PoC。"""
-        ip_port_text = self.ip_port_input.text().strip()
-        cmd = self.cmd_input.text().strip() or "whoami"
-        timeout = self.timeout_spin.value()
-
-        if not ip_port_text:
-            QMessageBox.warning(self, "警告", "请输入目标地址（例如 192.168.1.1:80 或 192.168.1.1）")
+    def create_css_md5_tab(self):
+        """创建 CSS MD5 计算标签页"""
+        widget = QWidget()
+        layout = QVBoxLayout()
+        
+        # 输入区域
+        input_group = QGroupBox("参数设置")
+        input_layout = QFormLayout()
+        
+        # 页面URL
+        self.css_page_url_input = QLineEdit()
+        self.css_page_url_input.setPlaceholderText("例如: http://192.168.1.1:80/")
+        input_layout.addRow("页面 URL:", self.css_page_url_input)
+        
+        # 超时时间
+        self.css_timeout_spin = QSpinBox()
+        self.css_timeout_spin.setRange(1, 300)
+        self.css_timeout_spin.setValue(3)
+        input_layout.addRow("超时时间(秒):", self.css_timeout_spin)
+        
+        input_group.setLayout(input_layout)
+        layout.addWidget(input_group)
+        
+        # 按钮区域
+        button_layout = QHBoxLayout()
+        
+        self.css_calculate_btn = QPushButton("计算 CSS MD5")
+        self.css_calculate_btn.clicked.connect(self.calculate_css_md5)
+        button_layout.addWidget(self.css_calculate_btn)
+        
+        button_layout.addStretch()
+        layout.addLayout(button_layout)
+        
+        # 结果显示区域
+        result_group = QGroupBox("结果显示")
+        result_layout = QVBoxLayout()
+        
+        self.css_result_text = QTextEdit()
+        self.css_result_text.setReadOnly(True)
+        self.css_result_text.setFont(QFont("Consolas", 10))
+        result_layout.addWidget(self.css_result_text)
+        
+        result_group.setLayout(result_layout)
+        layout.addWidget(result_group)
+        
+        widget.setLayout(layout)
+        return widget
+    
+    def calculate_css_md5(self):
+        """计算CSS文件的MD5值"""
+        page_url = self.css_page_url_input.text().strip()
+        timeout = self.css_timeout_spin.value()
+        
+        if not page_url:
+            QMessageBox.warning(self, "警告", "请输入页面 URL")
             return
-
-        # 从输入中提取 IP（忽略端口，指纹识别模块会自行扫描端口）
-        if ":" in ip_port_text:
-            ip = ip_port_text.split(":", 1)[0]
+        
+        if get_css_files_md5_from_page is None:
+            QMessageBox.warning(self, "警告", "CSS MD5功能未加载")
+            return
+        
+        # 禁用按钮
+        self.css_calculate_btn.setEnabled(False)
+        self.css_calculate_btn.setText("计算中...")
+        self.css_result_text.clear()
+        self.css_result_text.append("正在访问页面并提取CSS文件...\n")
+        
+        # 创建工作线程
+        self.css_worker = CSSMD5Worker(page_url, timeout)
+        self.css_worker.finished.connect(self.on_css_md5_finished)
+        self.css_worker.error.connect(self.on_css_md5_error)
+        self.css_worker.start()
+    
+    def on_css_md5_finished(self, css_md5_dict):
+        """CSS MD5计算完成回调，并匹配CVE（精简回显格式）"""
+        self.css_calculate_btn.setEnabled(True)
+        self.css_calculate_btn.setText("计算 CSS MD5")
+        
+        if not css_md5_dict:
+            self.css_result_text.append("[!] 未找到CSS文件或访问页面失败")
+            QMessageBox.warning(self, "警告", "未找到CSS文件或访问页面失败")
+            return
+        
+        self.css_result_text.clear()
+        self.css_result_text.append("=" * 60)
+        self.css_result_text.append("CSS 文件 MD5 计算结果")
+        self.css_result_text.append("=" * 60)
+        self.css_result_text.append(f"找到 {len(css_md5_dict)} 个CSS文件")
+        
+        success_count = 0
+        matched_cve = 0
+        matched_cve_set = set()
+        for css_url, info in css_md5_dict.items():
+            if isinstance(info, tuple):
+                md5_hash, cve_id = info
+            else:
+                md5_hash, cve_id = info, None
+            
+            self.css_result_text.append("-" * 60)
+            self.css_result_text.append(f"URL : {css_url}")
+            if md5_hash:
+                self.css_result_text.append(f"MD5 : {md5_hash}")
+                if cve_id:
+                    self.css_result_text.append(f"CVE : {cve_id}")
+                    matched_cve += 1
+                    matched_cve_set.add(cve_id)
+                else:
+                    self.css_result_text.append("CVE : (未匹配)")
+                success_count += 1
+            else:
+                self.css_result_text.append("MD5 : (下载失败)")
+                self.css_result_text.append("CVE : -")
+        
+        self.css_result_text.append("=" * 60)
+        self.css_result_text.append(f"成功: {success_count}/{len(css_md5_dict)}")
+        if matched_cve_set:
+            self.css_result_text.append(f"匹配到的 CVE 列表: {', '.join(sorted(matched_cve_set))}")
+        
+        if success_count > 0:
+            QMessageBox.information(self, "成功", f"成功计算 {success_count} 个CSS文件的MD5值，匹配到 {matched_cve} 个CVE")
         else:
-            ip = ip_port_text
-
-        if fingerprint_and_select_poc is None or fp_match_and_execute is None:
-            QMessageBox.warning(self, "警告", "指纹模块或指纹注册表未正确加载，无法使用自动 PoC 功能")
+            QMessageBox.warning(self, "警告", "所有CSS文件下载失败")
+    
+    def on_css_md5_error(self, error_msg):
+        """CSS MD5计算错误回调"""
+        self.css_calculate_btn.setEnabled(True)
+        self.css_calculate_btn.setText("计算 CSS MD5")
+        self.css_result_text.append(f"[!] 错误: {error_msg}")
+        QMessageBox.critical(self, "错误", f"计算失败: {error_msg}")
+    
+    def create_fingerprint_tab(self):
+        """创建指纹-CVE映射管理标签页"""
+        widget = QWidget()
+        layout = QVBoxLayout()
+        
+        # 输入区域
+        input_group = QGroupBox("添加/更新映射")
+        input_layout = QFormLayout()
+        
+        # 指纹输入
+        self.fp_fingerprint_input = QLineEdit()
+        self.fp_fingerprint_input.setPlaceholderText("例如: abc123def456... (MD5值)")
+        input_layout.addRow("指纹:", self.fp_fingerprint_input)
+        
+        # CVE输入
+        self.fp_cve_input = QLineEdit()
+        self.fp_cve_input.setPlaceholderText("例如: CVE-2024-XXXX (留空表示无CVE)")
+        input_layout.addRow("CVE编号:", self.fp_cve_input)
+        
+        # 描述输入
+        self.fp_description_input = QLineEdit()
+        self.fp_description_input.setPlaceholderText("可选描述信息")
+        input_layout.addRow("描述:", self.fp_description_input)
+        
+        input_group.setLayout(input_layout)
+        layout.addWidget(input_group)
+        
+        # 按钮区域
+        button_layout = QHBoxLayout()
+        
+        self.fp_add_btn = QPushButton("添加/更新映射")
+        self.fp_add_btn.clicked.connect(self.add_fingerprint_mapping)
+        button_layout.addWidget(self.fp_add_btn)
+        
+        self.fp_remove_btn = QPushButton("删除映射")
+        self.fp_remove_btn.clicked.connect(self.remove_fingerprint_mapping)
+        button_layout.addWidget(self.fp_remove_btn)
+        
+        self.fp_refresh_btn = QPushButton("刷新列表")
+        self.fp_refresh_btn.clicked.connect(self.refresh_fingerprint_list)
+        button_layout.addWidget(self.fp_refresh_btn)
+        
+        button_layout.addStretch()
+        layout.addLayout(button_layout)
+        
+        # 映射列表区域
+        list_group = QGroupBox("映射列表")
+        list_layout = QVBoxLayout()
+        
+        self.fp_list_widget = QListWidget()
+        self.fp_list_widget.setFont(QFont("Consolas", 9))
+        list_layout.addWidget(self.fp_list_widget)
+        
+        list_group.setLayout(list_layout)
+        layout.addWidget(list_group)
+        
+        widget.setLayout(layout)
+        
+        # 初始化列表
+        self.refresh_fingerprint_list()
+        
+        return widget
+    
+    def add_fingerprint_mapping(self):
+        """添加或更新指纹-CVE映射"""
+        if get_manager is None:
+            QMessageBox.warning(self, "警告", "指纹-CVE映射模块未加载")
             return
-
-        self.result_text.clear()
-        self.result_text.append("正在进行指纹识别并自动选择 PoC...\n")
-
-        try:
-            fp = fingerprint_and_select_poc(ip)
-        except Exception as e:
-            QMessageBox.critical(self, "错误", f"指纹识别失败: {e}")
-            self.result_text.append(f"[!] 指纹识别失败: {e}")
+        
+        fingerprint = self.fp_fingerprint_input.text().strip()
+        cve_id = self.fp_cve_input.text().strip() or None
+        description = self.fp_description_input.text().strip() or None
+        
+        if not fingerprint:
+            QMessageBox.warning(self, "警告", "请输入指纹")
             return
-
-        # 展示指纹识别结果
-        self.result_text.append("=" * 60)
-        self.result_text.append("指纹识别结果:")
-        self.result_text.append("=" * 60)
-        self.result_text.append(f"目标 IP: {ip}")
-        self.result_text.append(f"是否存在 Web 服务: {fp.has_web} (端口: {fp.web_ports})")
-        self.result_text.append(f"Web 固有文件指纹: {fp.web_fingerprints}")
-        if fp.web_file_hashes:
-            self.result_text.append("Web 文件 MD5 哈希值:")
-            for file_path, md5_hash in fp.web_file_hashes.items():
-                self.result_text.append(f"  {file_path}: {md5_hash}")
-        self.result_text.append(f"是否存在数据库端口: {fp.has_db} (详情: {fp.db_ports})")
-        self.result_text.append(f"选择理由: {fp.reason}")
-        self.result_text.append("")
-
-        # 目前示例性支持 Drupal 指纹 -> /core/CHANGELOG.txt -> CVE_2019_6340
-        if fp.has_web and fp.web_ports and "drupal" in fp.web_fingerprints:
-            web_port = fp.web_ports[0]
-            self.result_text.append("[+] 检测到 Drupal 固有文件指纹，尝试通过指纹注册表触发 PoC...\n")
-            try:
-                response = fp_match_and_execute(
-                    target_file_path="/core/CHANGELOG.txt",
-                    target_file_hash=None,
-                    extra_target_info={
-                        "ip": ip,
-                        "port": web_port,
-                        "cmd": cmd,
-                        "timeout": timeout,
-                    },
-                )
-                # 复用已有的响应展示逻辑
-                self.on_send_finished(response)
-            except Exception as e:
-                QMessageBox.critical(self, "错误", f"指纹注册表执行 PoC 失败: {e}")
-                self.result_text.append(f"[!] 指纹注册表执行 PoC 失败: {e}")
+        
+        manager = get_manager()
+        if manager.add_mapping(fingerprint, cve_id, description):
+            QMessageBox.information(self, "成功", f"成功添加映射: {fingerprint} -> {cve_id or '(无CVE)'}")
+            # 清空输入框
+            self.fp_fingerprint_input.clear()
+            self.fp_cve_input.clear()
+            self.fp_description_input.clear()
+            # 刷新列表
+            self.refresh_fingerprint_list()
         else:
-            self.result_text.append("[!] 未检测到可用的 Web 固有文件指纹，当前未自动触发任何 PoC。")
+            QMessageBox.warning(self, "失败", "添加映射失败")
+    
+    def remove_fingerprint_mapping(self):
+        """删除指纹-CVE映射"""
+        if get_manager is None:
+            QMessageBox.warning(self, "警告", "指纹-CVE映射模块未加载")
+            return
+        
+        current_item = self.fp_list_widget.currentItem()
+        if not current_item:
+            QMessageBox.warning(self, "警告", "请先选择要删除的映射")
+            return
+        
+        # 从显示文本中提取指纹（格式：指纹: xxx）
+        text = current_item.text()
+        if "指纹:" in text:
+            fingerprint = text.split("指纹:")[1].split("\n")[0].strip()
+        else:
+            QMessageBox.warning(self, "警告", "无法解析指纹信息")
+            return
+        
+        reply = QMessageBox.question(self, "确认", f"确定要删除指纹 {fingerprint} 的映射吗？",
+                                     QMessageBox.Yes | QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            manager = get_manager()
+            if manager.remove_mapping(fingerprint):
+                QMessageBox.information(self, "成功", "删除成功")
+                self.refresh_fingerprint_list()
+            else:
+                QMessageBox.warning(self, "失败", "删除失败")
+    
+    def refresh_fingerprint_list(self):
+        """刷新指纹-CVE映射列表"""
+        if get_manager is None:
+            self.fp_list_widget.clear()
+            self.fp_list_widget.addItem("指纹-CVE映射模块未加载")
+            return
+        
+        manager = get_manager()
+        mappings = manager.get_all_mappings()
+        
+        self.fp_list_widget.clear()
+        
+        if not mappings:
+            self.fp_list_widget.addItem("暂无映射")
+        else:
+            for mapping in mappings:
+                item_text = f"指纹: {mapping.fingerprint}\n"
+                item_text += f"CVE: {mapping.cve_id or '(无CVE)'}\n"
+                if mapping.description:
+                    item_text += f"描述: {mapping.description}"
+                self.fp_list_widget.addItem(item_text)
     
     def _pretty_json(self, text: str) -> str:
         """尝试将文本格式化为JSON，失败则原样返回。"""
@@ -621,28 +805,25 @@ class MainWindow(QMainWindow):
             self.output_dir_input.setText(dir_path)
     
     def parse_packet(self):
-        """拆解数据包"""
+        """拆解数据包（仅支持选择文件，不允许直接输入内容）"""
         cve_id = self.cve_id_input.text().strip()
         packet_file = self.packet_file_input.text().strip()
-        packet_text = self.packet_text.toPlainText().strip()
         
         if not cve_id:
             QMessageBox.warning(self, "警告", "请输入 CVE 编号")
             return
         
-        if not packet_file and not packet_text:
-            QMessageBox.warning(self, "警告", "请选择数据包文件或输入数据包内容")
+        if not packet_file:
+            QMessageBox.warning(self, "警告", "请选择数据包文件")
+            return
+        
+        if not os.path.exists(packet_file):
+            QMessageBox.warning(self, "警告", "数据包文件不存在")
             return
         
         try:
             # 读取数据包
-            if packet_file:
-                if not os.path.exists(packet_file):
-                    QMessageBox.warning(self, "警告", "数据包文件不存在")
-                    return
-                packet = read_packet_file(packet_file)
-            else:
-                packet = packet_text
+            packet = read_packet_file(packet_file)
             
             # 拆解数据包
             self.parse_result_text.clear()
@@ -669,29 +850,26 @@ class MainWindow(QMainWindow):
             self.parse_result_text.append(f"[!] 错误: {e}")
     
     def generate_template(self):
-        """生成并保存模板"""
+        """生成并保存模板（仅支持选择文件，不允许直接输入内容）"""
         cve_id = self.cve_id_input.text().strip()
         packet_file = self.packet_file_input.text().strip()
-        packet_text = self.packet_text.toPlainText().strip()
         output_dir = self.output_dir_input.text().strip() or None
         
         if not cve_id:
             QMessageBox.warning(self, "警告", "请输入 CVE 编号")
             return
         
-        if not packet_file and not packet_text:
-            QMessageBox.warning(self, "警告", "请选择数据包文件或输入数据包内容")
+        if not packet_file:
+            QMessageBox.warning(self, "警告", "请选择数据包文件")
+            return
+        
+        if not os.path.exists(packet_file):
+            QMessageBox.warning(self, "警告", "数据包文件不存在")
             return
         
         try:
             # 读取数据包
-            if packet_file:
-                if not os.path.exists(packet_file):
-                    QMessageBox.warning(self, "警告", "数据包文件不存在")
-                    return
-                packet = read_packet_file(packet_file)
-            else:
-                packet = packet_text
+            packet = read_packet_file(packet_file)
             
             # 生成模板
             self.parse_result_text.clear()
