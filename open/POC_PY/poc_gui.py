@@ -121,6 +121,112 @@ class CSSMD5Worker(QThread):
             self.error.emit(str(e))
 
 
+class AutoTestWorker(QThread):
+    """自动化测试工作线程"""
+    log_signal = pyqtSignal(str)
+    finished = pyqtSignal(int, int)  # success_count, total_count
+    error = pyqtSignal(str)
+    
+    def __init__(self, url, cmd, fp_timeout, send_timeout):
+        super().__init__()
+        self.url = url
+        self.cmd = cmd
+        self.fp_timeout = fp_timeout
+        self.send_timeout = send_timeout
+    
+    def run(self):
+        try:
+            from urllib.parse import urlparse
+            
+            self.log_signal.emit("=" * 60)
+            self.log_signal.emit("自动化测试")
+            self.log_signal.emit("=" * 60)
+            self.log_signal.emit(f"目标 URL: {self.url}")
+            self.log_signal.emit(f"执行命令: {self.cmd}")
+            self.log_signal.emit("=" * 60 + "\n")
+            
+            # 步骤1：指纹识别
+            self.log_signal.emit("[*] 步骤1: 指纹识别（提取CSS文件并计算MD5）...")
+            
+            if get_css_files_md5_from_page is None:
+                self.error.emit("指纹模块未加载")
+                return
+            
+            css_md5_dict = get_css_files_md5_from_page(self.url, self.fp_timeout)
+            
+            if not css_md5_dict:
+                self.error.emit("未找到CSS文件或访问页面失败")
+                return
+            
+            # 收集匹配到的CVE
+            matched_cves = set()
+            for css_url, info in css_md5_dict.items():
+                if isinstance(info, tuple):
+                    md5_hash, cve_id = info
+                else:
+                    md5_hash, cve_id = info, None
+                
+                if md5_hash:
+                    self.log_signal.emit(f"    [+] {css_url}")
+                    self.log_signal.emit(f"        MD5: {md5_hash}")
+                    if cve_id:
+                        self.log_signal.emit(f"        CVE: {cve_id}")
+                        matched_cves.add(cve_id)
+            
+            if not matched_cves:
+                self.error.emit("未匹配到任何CVE，无法执行自动化测试")
+                return
+            
+            self.log_signal.emit(f"\n[+] 匹配到的CVE: {', '.join(sorted(matched_cves))}")
+            
+            # 步骤2：执行Payload
+            self.log_signal.emit(f"\n[*] 步骤2: 执行Payload...")
+            
+            # 从URL中提取ip:port
+            parsed = urlparse(self.url)
+            host = parsed.hostname or ''
+            port = parsed.port or (443 if parsed.scheme == 'https' else 80)
+            ip_port = f"{host}:{port}"
+            
+            payload_manager = PayloadManager(debug=False)
+            success_count = 0
+            
+            for cve_id in sorted(matched_cves):
+                # 将CVE-XXXX-XXXX转换为模块名CVE_XXXX_XXXX
+                module_name = cve_id.replace('-', '_')
+                
+                self.log_signal.emit(f"\n{'='*60}")
+                self.log_signal.emit(f"[*] 尝试执行 Payload: {module_name}")
+                self.log_signal.emit("=" * 60)
+                
+                try:
+                    # 传入日志回调，将执行过程显示在日志中
+                    result = payload_manager.send_payload_safe(
+                        module_name, ip_port, self.cmd, 
+                        timeout=self.send_timeout,
+                        log_callback=lambda msg: self.log_signal.emit(msg)
+                    )
+                    # 使用 is not None 判断，因为 response 对象在状态码非2xx时 bool 值可能为 False
+                    if result is not None:
+                        # 检测响应包中是否包含www-data
+                        response_text = result.text if hasattr(result, 'text') else str(result)
+                        if 'www-data' in response_text:
+                            success_count += 1
+                            self.log_signal.emit(f"[+] {module_name} 执行成功!")
+                            self.log_signal.emit(f"[!] 检测到 www-data，存在 {cve_id} 漏洞!")
+                        else:
+                            self.log_signal.emit(f"[-] {module_name} 响应中未检测到 www-data")
+                    else:
+                        self.log_signal.emit(f"[-] {module_name} 执行失败（无响应）")
+                except Exception as e:
+                    self.log_signal.emit(f"[-] {module_name} 执行出错: {e}")
+            
+            self.finished.emit(success_count, len(matched_cves))
+            
+        except Exception as e:
+            self.error.emit(str(e))
+
+
 class MainWindow(QMainWindow):
     """主窗口"""
     
@@ -157,6 +263,11 @@ class MainWindow(QMainWindow):
         if get_manager is not None:
             mapping_tab = self.create_fingerprint_tab()
             tabs.addTab(mapping_tab, "指纹-CVE映射")
+        
+        # 自动化测试标签页
+        if get_css_files_md5_from_page is not None:
+            auto_tab = self.create_auto_test_tab()
+            tabs.addTab(auto_tab, "自动化测试")
         
         self.setCentralWidget(tabs)
     
@@ -591,6 +702,123 @@ class MainWindow(QMainWindow):
         self.css_calculate_btn.setText("计算 CSS MD5")
         self.css_result_text.append(f"[!] 错误: {error_msg}")
         QMessageBox.critical(self, "错误", f"计算失败: {error_msg}")
+    
+    def create_auto_test_tab(self):
+        """创建自动化测试标签页"""
+        widget = QWidget()
+        layout = QVBoxLayout()
+        
+        # 输入区域
+        input_group = QGroupBox("参数设置")
+        input_layout = QFormLayout()
+        
+        # 目标URL
+        self.auto_url_input = QLineEdit()
+        self.auto_url_input.setPlaceholderText("例如: http://192.168.1.1:80/")
+        input_layout.addRow("目标 URL:", self.auto_url_input)
+        
+        # 执行命令
+        self.auto_cmd_input = QLineEdit()
+        self.auto_cmd_input.setText("whoami")
+        self.auto_cmd_input.setPlaceholderText("默认: whoami")
+        input_layout.addRow("执行命令:", self.auto_cmd_input)
+        
+        # 指纹识别超时
+        self.auto_fp_timeout_spin = QSpinBox()
+        self.auto_fp_timeout_spin.setRange(1, 60)
+        self.auto_fp_timeout_spin.setValue(3)
+        input_layout.addRow("指纹识别超时(秒):", self.auto_fp_timeout_spin)
+        
+        # Payload发送超时
+        self.auto_send_timeout_spin = QSpinBox()
+        self.auto_send_timeout_spin.setRange(1, 300)
+        self.auto_send_timeout_spin.setValue(10)
+        input_layout.addRow("Payload发送超时(秒):", self.auto_send_timeout_spin)
+        
+        input_group.setLayout(input_layout)
+        layout.addWidget(input_group)
+        
+        # 按钮区域
+        button_layout = QHBoxLayout()
+        
+        self.auto_test_btn = QPushButton("开始自动化测试")
+        self.auto_test_btn.clicked.connect(self.start_auto_test)
+        button_layout.addWidget(self.auto_test_btn)
+        
+        self.auto_clear_btn = QPushButton("清空日志")
+        self.auto_clear_btn.clicked.connect(lambda: self.auto_result_text.clear())
+        button_layout.addWidget(self.auto_clear_btn)
+        
+        button_layout.addStretch()
+        layout.addLayout(button_layout)
+        
+        # 结果显示区域
+        result_group = QGroupBox("执行日志")
+        result_layout = QVBoxLayout()
+        
+        self.auto_result_text = QTextEdit()
+        self.auto_result_text.setReadOnly(True)
+        self.auto_result_text.setFont(QFont("Consolas", 10))
+        result_layout.addWidget(self.auto_result_text)
+        
+        result_group.setLayout(result_layout)
+        layout.addWidget(result_group)
+        
+        widget.setLayout(layout)
+        return widget
+    
+    def start_auto_test(self):
+        """开始自动化测试"""
+        url = self.auto_url_input.text().strip()
+        cmd = self.auto_cmd_input.text().strip() or "whoami"
+        fp_timeout = self.auto_fp_timeout_spin.value()
+        send_timeout = self.auto_send_timeout_spin.value()
+        
+        if not url:
+            QMessageBox.warning(self, "警告", "请输入目标 URL")
+            return
+        
+        # 禁用按钮
+        self.auto_test_btn.setEnabled(False)
+        self.auto_test_btn.setText("测试中...")
+        self.auto_result_text.clear()
+        
+        # 创建工作线程
+        self.auto_worker = AutoTestWorker(url, cmd, fp_timeout, send_timeout)
+        self.auto_worker.log_signal.connect(self.on_auto_test_log)
+        self.auto_worker.finished.connect(self.on_auto_test_finished)
+        self.auto_worker.error.connect(self.on_auto_test_error)
+        self.auto_worker.start()
+    
+    def on_auto_test_log(self, msg):
+        """自动化测试日志回调"""
+        self.auto_result_text.append(msg)
+        # 滚动到底部
+        cursor = self.auto_result_text.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        self.auto_result_text.setTextCursor(cursor)
+    
+    def on_auto_test_finished(self, success_count, total_count):
+        """自动化测试完成回调"""
+        self.auto_test_btn.setEnabled(True)
+        self.auto_test_btn.setText("开始自动化测试")
+        
+        self.auto_result_text.append("\n" + "=" * 60)
+        self.auto_result_text.append("自动化测试完成")
+        self.auto_result_text.append(f"成功执行: {success_count}/{total_count}")
+        self.auto_result_text.append("=" * 60)
+        
+        if success_count > 0:
+            QMessageBox.information(self, "完成", f"自动化测试完成\n成功执行: {success_count}/{total_count}")
+        else:
+            QMessageBox.warning(self, "完成", f"自动化测试完成，但所有Payload执行失败")
+    
+    def on_auto_test_error(self, error_msg):
+        """自动化测试错误回调"""
+        self.auto_test_btn.setEnabled(True)
+        self.auto_test_btn.setText("开始自动化测试")
+        self.auto_result_text.append(f"\n[!] 错误: {error_msg}")
+        QMessageBox.critical(self, "错误", f"自动化测试失败: {error_msg}")
     
     def create_fingerprint_tab(self):
         """创建指纹-CVE映射管理标签页"""

