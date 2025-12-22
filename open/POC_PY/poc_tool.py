@@ -36,6 +36,13 @@ try:
     from fingerprint_cve_mapping import get_manager
 except ImportError:
     get_manager = None
+
+try:
+    from port_scanner import check_port, scan_ports, scan_common_ports, format_scan_result, COMMON_PORTS
+except ImportError:
+    check_port = None
+    scan_ports = None
+    scan_common_ports = None
  
 
 
@@ -73,6 +80,11 @@ def main():
   # 自动化测试（指纹识别 + 自动执行Payload）
   %(prog)s auto http://192.168.1.1:80/
   %(prog)s auto http://192.168.1.1:80/ --cmd "id"
+  
+  # 端口扫描
+  %(prog)s portscan 192.168.1.1
+  %(prog)s portscan 192.168.1.1 --ports 80,443,8080
+  %(prog)s portscan 192.168.1.1 --range 1-1000
         """
     )
     
@@ -148,6 +160,13 @@ def main():
     parser_auto.add_argument('--timeout', type=float, default=3.0, help='指纹识别超时时间（秒，默认3.0）')
     parser_auto.add_argument('--send-timeout', type=int, default=10, help='Payload发送超时时间（秒，默认10）')
     parser_auto.add_argument('--debug', action='store_true', help='启用调试模式')
+    
+    # portscan命令 - 端口扫描
+    parser_port = subparsers.add_parser('portscan', help='端口扫描：检测目标主机开放的端口')
+    parser_port.add_argument('host', help='目标主机IP或域名（如: 192.168.1.1）')
+    parser_port.add_argument('--ports', help='指定端口列表，逗号分隔（如: 80,443,8080）')
+    parser_port.add_argument('--range', dest='port_range', help='端口范围（如: 1-1000）')
+    parser_port.add_argument('--timeout', type=float, default=2.0, help='每个端口超时时间（秒，默认2.0）')
     
     args = parser.parse_args()
     
@@ -450,6 +469,52 @@ def main():
         print(f"成功执行: {success_count}/{len(matched_cves)}", flush=True)
         print(f"{'='*60}", flush=True)
         sys.exit(0 if success_count > 0 else 1)
+    
+    elif args.command == 'portscan':
+        if scan_ports is None:
+            print("[!] 端口扫描模块未加载", file=sys.stderr, flush=True)
+            sys.exit(1)
+        
+        host = args.host
+        timeout = args.timeout
+        
+        print(f"\n{'='*60}", flush=True)
+        print("端口扫描", flush=True)
+        print(f"{'='*60}", flush=True)
+        print(f"目标主机: {host}", flush=True)
+        print(f"{'='*60}\n", flush=True)
+        
+        # 确定要扫描的端口
+        if args.ports:
+            # 指定端口列表
+            try:
+                ports = [int(p.strip()) for p in args.ports.split(',')]
+                print(f"[*] 扫描指定端口: {args.ports}", flush=True)
+            except ValueError:
+                print("[!] 端口格式错误，请使用逗号分隔的数字", file=sys.stderr, flush=True)
+                sys.exit(1)
+        elif args.port_range:
+            # 端口范围
+            try:
+                start, end = args.port_range.split('-')
+                ports = list(range(int(start), int(end) + 1))
+                print(f"[*] 扫描端口范围: {args.port_range} ({len(ports)} 个端口)", flush=True)
+            except ValueError:
+                print("[!] 端口范围格式错误，请使用 起始-结束 格式", file=sys.stderr, flush=True)
+                sys.exit(1)
+        else:
+            # 默认扫描常见端口
+            ports = list(COMMON_PORTS.keys())
+            print(f"[*] 扫描常见端口 ({len(ports)} 个端口)", flush=True)
+        
+        print(f"[*] 开始扫描...\n", flush=True)
+        
+        results = scan_ports(host, ports, timeout)
+        print(format_scan_result(results), flush=True)
+        
+        open_count = sum(1 for _, (is_open, _) in results.items() if is_open)
+        print(f"\n{'='*60}", flush=True)
+        sys.exit(0 if open_count > 0 else 1)
 
 
 if __name__ == "__main__":

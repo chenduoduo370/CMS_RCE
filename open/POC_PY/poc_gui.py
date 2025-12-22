@@ -32,6 +32,12 @@ except ImportError:
 # 导入核心模块（已拆分）
 from payload_sender import PayloadManager, list_payloads
 from packet_generator import generate_from_packet, read_packet_file
+try:
+    # 端口扫描功能
+    from port_scanner import scan_ports, format_scan_result
+except ImportError:
+    scan_ports = None
+    format_scan_result = None
 
 try:
     # CSS MD5计算功能
@@ -124,15 +130,21 @@ class CSSMD5Worker(QThread):
 class AutoTestWorker(QThread):
     """自动化测试工作线程"""
     log_signal = pyqtSignal(str)
+    detail_signal = pyqtSignal(dict)  # {'cve':str,'executed_ports':list,'success':bool,'success_port':int|None}
     finished = pyqtSignal(int, int)  # success_count, total_count
     error = pyqtSignal(str)
     
-    def __init__(self, url, cmd, fp_timeout, send_timeout):
+    def __init__(self, url, cmd, fp_timeout, send_timeout, do_port_scan: bool = False,
+                 ports: list = None, port_timeout: int = 2):
         super().__init__()
         self.url = url
         self.cmd = cmd
         self.fp_timeout = fp_timeout
         self.send_timeout = send_timeout
+        # 端口扫描配置
+        self.do_port_scan = do_port_scan
+        self.ports = ports
+        self.port_timeout = port_timeout
     
     def run(self):
         try:
@@ -141,88 +153,192 @@ class AutoTestWorker(QThread):
             self.log_signal.emit("=" * 60)
             self.log_signal.emit("自动化测试")
             self.log_signal.emit("=" * 60)
-            self.log_signal.emit(f"目标 URL: {self.url}")
+            self.log_signal.emit(f"目标: {self.url}")
             self.log_signal.emit(f"执行命令: {self.cmd}")
             self.log_signal.emit("=" * 60 + "\n")
-            
-            # 步骤1：指纹识别
-            self.log_signal.emit("[*] 步骤1: 指纹识别（提取CSS文件并计算MD5）...")
-            
+
+            # 步骤1：端口扫描 -> 对每个开放端口进行指纹识别
+            self.log_signal.emit("[*] 步骤1: 端口扫描（若启用）并对开放端口进行指纹识别...")
+
+            # 解析主机与提供的端口
+            provided_port = None
+            base_host = ""
+            if '://' in self.url:
+                parsed = urlparse(self.url)
+                base_host = parsed.hostname or ''
+                provided_port = parsed.port
+            else:
+                if ':' in self.url:
+                    try:
+                        host_part, port_part = self.url.rsplit(':', 1)
+                        base_host = host_part
+                        provided_port = int(port_part)
+                    except Exception:
+                        base_host = self.url
+                        provided_port = None
+                else:
+                    base_host = self.url
+                    provided_port = None
+
+            # 进行端口扫描（若启用），否则使用提供的端口或默认80
+            ports_to_scan = [provided_port] if provided_port else [80]
+            open_ports = []
+            if self.do_port_scan and scan_ports is not None:
+                try:
+                    self.log_signal.emit(f"    [+] 扫描目标: {base_host}")
+                    scan_results = scan_ports(base_host, self.ports, timeout=self.port_timeout)
+                    open_ports = sorted([p for p, (is_open, _) in scan_results.items() if is_open])
+                    if open_ports:
+                        self.log_signal.emit(f"    [+] 发现开放端口: {', '.join(str(p) for p in open_ports)}")
+                    else:
+                        self.log_signal.emit("    [-] 未发现开放端口，使用提供端口或默认 80")
+                        open_ports = ports_to_scan
+                except Exception as e:
+                    self.log_signal.emit(f"[!] 端口扫描出错: {e}")
+                    open_ports = ports_to_scan
+            else:
+                open_ports = ports_to_scan
+
+            # 对每个开放端口做指纹识别，收集匹配到的 CVE（按端口映射）
             if get_css_files_md5_from_page is None:
                 self.error.emit("指纹模块未加载")
                 return
-            
-            css_md5_dict = get_css_files_md5_from_page(self.url, self.fp_timeout)
-            
-            if not css_md5_dict:
-                self.error.emit("未找到CSS文件或访问页面失败")
-                return
-            
-            # 收集匹配到的CVE
-            matched_cves = set()
-            for css_url, info in css_md5_dict.items():
-                if isinstance(info, tuple):
-                    md5_hash, cve_id = info
-                else:
-                    md5_hash, cve_id = info, None
-                
-                if md5_hash:
-                    self.log_signal.emit(f"    [+] {css_url}")
-                    self.log_signal.emit(f"        MD5: {md5_hash}")
-                    if cve_id:
-                        self.log_signal.emit(f"        CVE: {cve_id}")
-                        matched_cves.add(cve_id)
-            
+
+            matched_cves_per_port = {}  # cve -> set(ports)
+            for port in open_ports:
+                try:
+                    url_for_fp = f"http://{base_host}:{port}/"
+                    self.log_signal.emit(f"    [*] 对 {url_for_fp} 进行指纹识别...")
+                    css_md5_dict = get_css_files_md5_from_page(url_for_fp, self.fp_timeout)
+                    if not css_md5_dict:
+                        self.log_signal.emit(f"    [-] {url_for_fp} 未提取到 CSS 或访问失败")
+                        continue
+
+                    for css_url, info in css_md5_dict.items():
+                        if isinstance(info, tuple):
+                            md5_hash, cve_id = info
+                        else:
+                            md5_hash, cve_id = info, None
+                        if md5_hash:
+                            self.log_signal.emit(f"        [+] {css_url} MD5: {md5_hash} {'CVE: '+cve_id if cve_id else ''}")
+                            if cve_id:
+                                matched_cves_per_port.setdefault(cve_id, set()).add(port)
+                except Exception as e:
+                    self.log_signal.emit(f"    [!] 指纹识别出错 ({base_host}:{port}): {e}")
+
+            matched_cves = set(matched_cves_per_port.keys())
             if not matched_cves:
-                self.error.emit("未匹配到任何CVE，无法执行自动化测试")
+                self.error.emit("未匹配到任何CVE，自动化测试结束")
                 return
-            
-            self.log_signal.emit(f"\n[+] 匹配到的CVE: {', '.join(sorted(matched_cves))}")
-            
+
+            self.log_signal.emit(f"\n[+] 匹配到的 CVE: {', '.join(sorted(matched_cves))}")
+
             # 步骤2：执行Payload
             self.log_signal.emit(f"\n[*] 步骤2: 执行Payload...")
             
-            # 从URL中提取ip:port
-            parsed = urlparse(self.url)
-            host = parsed.hostname or ''
-            port = parsed.port or (443 if parsed.scheme == 'https' else 80)
-            ip_port = f"{host}:{port}"
-            
+            # 确定待测试的主机与端口列表
+            base_host = ""
+            provided_port = None
+            if '://' in self.url:
+                parsed = urlparse(self.url)
+                base_host = parsed.hostname or ''
+                provided_port = parsed.port
+            else:
+                # 处理 IP 或 IP:port 情况
+                if ':' in self.url:
+                    try:
+                        host_part, port_part = self.url.rsplit(':', 1)
+                        base_host = host_part
+                        provided_port = int(port_part)
+                    except Exception:
+                        base_host = self.url
+                        provided_port = None
+                else:
+                    base_host = self.url
+
             payload_manager = PayloadManager(debug=False)
             success_count = 0
-            
+            total_cves = len(matched_cves)
+
+            # 对每个匹配到的 CVE，只在该 CVE 匹配到的端口上执行对应 Payload
             for cve_id in sorted(matched_cves):
-                # 将CVE-XXXX-XXXX转换为模块名CVE_XXXX_XXXX
                 module_name = cve_id.replace('-', '_')
-                
+                ports_for_cve = sorted(matched_cves_per_port.get(cve_id, [])) or []
+
                 self.log_signal.emit(f"\n{'='*60}")
                 self.log_signal.emit(f"[*] 尝试执行 Payload: {module_name}")
+                self.log_signal.emit(f"    匹配端口: {', '.join(str(p) for p in ports_for_cve) if ports_for_cve else '(无)'}")
                 self.log_signal.emit("=" * 60)
-                
+
+                cve_success = False
+                success_port = None
+
+                if not ports_for_cve:
+                    self.log_signal.emit(f"    [!] 未在任何端口匹配到 {module_name} 的指纹，跳过执行")
+                else:
+                    for port in ports_for_cve:
+                        ip_port = f"{base_host}:{port}"
+                        self.log_signal.emit(f"    [*] 目标: {ip_port}，执行命令: {self.cmd}")
+                        try:
+                            result = payload_manager.send_payload_safe(
+                                module_name, ip_port, self.cmd,
+                                timeout=self.send_timeout,
+                                log_callback=lambda msg: self.log_signal.emit(f"    {msg}")
+                            )
+                            if result is not None:
+                                response_text = result.text if hasattr(result, 'text') else str(result)
+                                if 'www-data' in response_text:
+                                    cve_success = True
+                                    success_count += 1
+                                    success_port = port
+                                    self.log_signal.emit(f"    [+] {module_name} 在 {ip_port} 执行成功！检测到 www-data")
+                                    break
+                                else:
+                                    self.log_signal.emit(f"    [-] {module_name} 在 {ip_port} 响应未检测到 www-data")
+                            else:
+                                self.log_signal.emit(f"    [-] {module_name} 在 {ip_port} 无响应")
+                        except Exception as e:
+                            self.log_signal.emit(f"    [!] {module_name} 在 {ip_port} 执行出错: {e}")
+
+                # 发送单个 CVE 详情到 UI（用于表格展示）
                 try:
-                    # 传入日志回调，将执行过程显示在日志中
-                    result = payload_manager.send_payload_safe(
-                        module_name, ip_port, self.cmd, 
-                        timeout=self.send_timeout,
-                        log_callback=lambda msg: self.log_signal.emit(msg)
-                    )
-                    # 使用 is not None 判断，因为 response 对象在状态码非2xx时 bool 值可能为 False
-                    if result is not None:
-                        # 检测响应包中是否包含www-data
-                        response_text = result.text if hasattr(result, 'text') else str(result)
-                        if 'www-data' in response_text:
-                            success_count += 1
-                            self.log_signal.emit(f"[+] {module_name} 执行成功!")
-                            self.log_signal.emit(f"[!] 检测到 www-data，存在 {cve_id} 漏洞!")
-                        else:
-                            self.log_signal.emit(f"[-] {module_name} 响应中未检测到 www-data")
-                    else:
-                        self.log_signal.emit(f"[-] {module_name} 执行失败（无响应）")
-                except Exception as e:
-                    self.log_signal.emit(f"[-] {module_name} 执行出错: {e}")
+                    self.detail_signal.emit({
+                        "cve": cve_id,
+                        "executed_ports": ports_for_cve,
+                        "success": cve_success,
+                        "success_port": success_port
+                    })
+                except Exception:
+                    pass
+
+            # 最终输出：列出匹配到的 CVE，并给出统计
+            self.log_signal.emit("\n" + "=" * 60)
+            self.log_signal.emit(f"匹配到的 CVE 列表: {', '.join(sorted(matched_cves))}")
+            self.log_signal.emit(f"成功执行的 CVE 数: {success_count}/{total_cves}")
+            self.finished.emit(success_count, total_cves)
             
-            self.finished.emit(success_count, len(matched_cves))
-            
+        except Exception as e:
+            self.error.emit(str(e))
+
+class PortScanWorker(QThread):
+    """端口扫描工作线程"""
+    finished = pyqtSignal(dict)
+    error = pyqtSignal(str)
+
+    def __init__(self, host: str, ports: list = None, timeout: float = 2.0, max_workers: int = 50):
+        super().__init__()
+        self.host = host
+        self.ports = ports
+        self.timeout = timeout
+        self.max_workers = max_workers
+
+    def run(self):
+        try:
+            if scan_ports is None:
+                self.error.emit("端口扫描模块未加载")
+                return
+            results = scan_ports(self.host, self.ports, timeout=self.timeout, max_workers=self.max_workers)
+            self.finished.emit(results)
         except Exception as e:
             self.error.emit(str(e))
 
@@ -258,6 +374,10 @@ class MainWindow(QMainWindow):
         # CSS MD5 标签页
         css_md5_tab = self.create_css_md5_tab()
         tabs.addTab(css_md5_tab, "CSS MD5 计算")
+        
+        # 端口扫描标签页
+        portscan_tab = self.create_portscan_tab()
+        tabs.addTab(portscan_tab, "端口扫描")
         
         # 指纹-CVE映射管理标签页
         if get_manager is not None:
@@ -316,7 +436,7 @@ class MainWindow(QMainWindow):
         self.send_btn = QPushButton("发送 Payload")
         self.send_btn.clicked.connect(self.send_payload)
         button_layout.addWidget(self.send_btn)
-
+        
         self.refresh_btn = QPushButton("刷新列表")
         self.refresh_btn.clicked.connect(self.refresh_payload_list)
         button_layout.addWidget(self.refresh_btn)
@@ -338,7 +458,7 @@ class MainWindow(QMainWindow):
         
         widget.setLayout(layout)
         return widget
-
+    
     def create_generate_tab(self):
         """创建数据包生成标签页"""
         widget = QWidget()
@@ -625,11 +745,11 @@ class MainWindow(QMainWindow):
         """计算CSS文件的MD5值"""
         page_url = self.css_page_url_input.text().strip()
         timeout = self.css_timeout_spin.value()
-        
+
         if not page_url:
             QMessageBox.warning(self, "警告", "请输入页面 URL")
             return
-        
+
         if get_css_files_md5_from_page is None:
             QMessageBox.warning(self, "警告", "CSS MD5功能未加载")
             return
@@ -703,6 +823,125 @@ class MainWindow(QMainWindow):
         self.css_result_text.append(f"[!] 错误: {error_msg}")
         QMessageBox.critical(self, "错误", f"计算失败: {error_msg}")
     
+    def create_portscan_tab(self):
+        """创建端口扫描标签页"""
+        widget = QWidget()
+        layout = QVBoxLayout()
+
+        # 输入区域
+        input_group = QGroupBox("参数设置")
+        input_layout = QFormLayout()
+
+        # 目标主机
+        self.port_host_input = QLineEdit()
+        self.port_host_input.setPlaceholderText("例如: 192.168.1.1 或 example.com")
+        input_layout.addRow("目标主机:", self.port_host_input)
+
+        # 端口（列表或范围）
+        self.port_ports_input = QLineEdit()
+        self.port_ports_input.setPlaceholderText("例如: 80,443 或 1-1024（留空表示常见端口）")
+        input_layout.addRow("端口:", self.port_ports_input)
+
+        # 超时时间
+        self.port_timeout_spin = QSpinBox()
+        self.port_timeout_spin.setRange(1, 30)
+        self.port_timeout_spin.setValue(2)
+        input_layout.addRow("超时时间(秒):", self.port_timeout_spin)
+
+        input_group.setLayout(input_layout)
+        layout.addWidget(input_group)
+
+        # 按钮区域
+        button_layout = QHBoxLayout()
+        self.portscan_start_btn = QPushButton("开始扫描")
+        self.portscan_start_btn.clicked.connect(self.start_port_scan)
+        button_layout.addWidget(self.portscan_start_btn)
+
+        self.portscan_clear_btn = QPushButton("清空结果")
+        self.portscan_clear_btn.clicked.connect(lambda: self.portscan_result_text.clear())
+        button_layout.addWidget(self.portscan_clear_btn)
+
+        button_layout.addStretch()
+        layout.addLayout(button_layout)
+
+        # 结果显示区域
+        result_group = QGroupBox("扫描结果")
+        result_layout = QVBoxLayout()
+        self.portscan_result_text = QTextEdit()
+        self.portscan_result_text.setReadOnly(True)
+        self.portscan_result_text.setFont(QFont("Consolas", 10))
+        result_layout.addWidget(self.portscan_result_text)
+        result_group.setLayout(result_layout)
+        layout.addWidget(result_group)
+
+        widget.setLayout(layout)
+        return widget
+
+    def start_port_scan(self):
+        """开始端口扫描"""
+        host = self.port_host_input.text().strip()
+        ports_text = self.port_ports_input.text().strip()
+        timeout = self.port_timeout_spin.value()
+
+        if not host:
+            QMessageBox.warning(self, "警告", "请输入目标主机")
+            return
+
+        # 解析端口输入
+        ports = None
+        if ports_text:
+            try:
+                if '-' in ports_text and ',' not in ports_text:
+                    start, end = ports_text.split('-')
+                    ports = list(range(int(start), int(end) + 1))
+                else:
+                    ports = [int(p.strip()) for p in ports_text.split(',') if p.strip()]
+            except Exception:
+                QMessageBox.warning(self, "警告", "端口格式错误，请使用逗号分隔或范围（如 80,443 或 1-1024）")
+                return
+
+        # 禁用按钮
+        self.portscan_start_btn.setEnabled(False)
+        self.portscan_start_btn.setText("扫描中...")
+        self.portscan_result_text.clear()
+        self.portscan_result_text.append(f"开始扫描 {host} ...\n")
+
+        # 创建工作线程
+        self.portscan_worker = PortScanWorker(host, ports=ports, timeout=timeout)
+        self.portscan_worker.finished.connect(self.on_port_scan_finished)
+        self.portscan_worker.error.connect(self.on_port_scan_error)
+        self.portscan_worker.start()
+
+    def on_port_scan_finished(self, results):
+        """端口扫描完成回调"""
+        self.portscan_start_btn.setEnabled(True)
+        self.portscan_start_btn.setText("开始扫描")
+        try:
+            if format_scan_result is not None:
+                output = format_scan_result(results)
+            else:
+                # 简易格式化
+                lines = []
+                open_ports = [(p, s) for p, (is_open, s) in sorted(results.items()) if is_open]
+                if open_ports:
+                    lines.append(f"开放的端口 ({len(open_ports)} 个):")
+                    for p, s in open_ports:
+                        lines.append(f"  {p}/tcp  open  {s or 'Unknown'}")
+                else:
+                    lines.append("未发现开放的端口")
+                lines.append(f"\n已扫描 {len(results)} 个端口")
+                output = "\n".join(lines)
+            self.portscan_result_text.append(output)
+        except Exception as e:
+            self.portscan_result_text.append(f"[!] 处理结果出错: {e}")
+
+    def on_port_scan_error(self, error_msg):
+        """端口扫描错误回调"""
+        self.portscan_start_btn.setEnabled(True)
+        self.portscan_start_btn.setText("开始扫描")
+        self.portscan_result_text.append(f"[!] 错误: {error_msg}")
+        QMessageBox.critical(self, "错误", f"端口扫描失败: {error_msg}")
+    
     def create_auto_test_tab(self):
         """创建自动化测试标签页"""
         widget = QWidget()
@@ -712,28 +951,28 @@ class MainWindow(QMainWindow):
         input_group = QGroupBox("参数设置")
         input_layout = QFormLayout()
         
-        # 目标URL
+        # 目标 IP（仅输入 IP 或 IP:端口，例如 192.168.1.1 或 192.168.1.1:8080）
         self.auto_url_input = QLineEdit()
-        self.auto_url_input.setPlaceholderText("例如: http://192.168.1.1:80/")
-        input_layout.addRow("目标 URL:", self.auto_url_input)
+        self.auto_url_input.setPlaceholderText("例如: 192.168.1.1 或 192.168.1.1:8080")
+        input_layout.addRow("目标 IP:", self.auto_url_input)
         
-        # 执行命令
-        self.auto_cmd_input = QLineEdit()
-        self.auto_cmd_input.setText("whoami")
-        self.auto_cmd_input.setPlaceholderText("默认: whoami")
-        input_layout.addRow("执行命令:", self.auto_cmd_input)
-        
-        # 指纹识别超时
-        self.auto_fp_timeout_spin = QSpinBox()
-        self.auto_fp_timeout_spin.setRange(1, 60)
-        self.auto_fp_timeout_spin.setValue(3)
-        input_layout.addRow("指纹识别超时(秒):", self.auto_fp_timeout_spin)
-        
-        # Payload发送超时
-        self.auto_send_timeout_spin = QSpinBox()
-        self.auto_send_timeout_spin.setRange(1, 300)
-        self.auto_send_timeout_spin.setValue(10)
-        input_layout.addRow("Payload发送超时(秒):", self.auto_send_timeout_spin)
+        # （仅保留目标 IP 输入，其他参数使用默认值）
+        # 启用端口扫描复选框（用户可选择是否在自动化测试前进行端口扫描）
+        from PyQt5.QtWidgets import QCheckBox
+        self.auto_portscan_chk = QCheckBox()
+        self.auto_portscan_chk.setChecked(False)
+        input_layout.addRow("启用端口扫描:", self.auto_portscan_chk)
+
+        # 自定义端口输入（可留空，格式：80,443 或 1-1000）
+        self.auto_ports_input = QLineEdit()
+        self.auto_ports_input.setPlaceholderText("可选: 例如 80,443 或 1-1024（留空使用常见端口）")
+        input_layout.addRow("自定义扫描端口:", self.auto_ports_input)
+
+        # 端口超时（秒）
+        self.auto_port_timeout_spin = QSpinBox()
+        self.auto_port_timeout_spin.setRange(1, 30)
+        self.auto_port_timeout_spin.setValue(2)
+        input_layout.addRow("端口超时(秒):", self.auto_port_timeout_spin)
         
         input_group.setLayout(input_layout)
         layout.addWidget(input_group)
@@ -764,30 +1003,80 @@ class MainWindow(QMainWindow):
         result_group.setLayout(result_layout)
         layout.addWidget(result_group)
         
+        # 结果汇总表格（每个匹配到的 CVE 的执行状态）
+        summary_group = QGroupBox("结果汇总")
+        summary_layout = QVBoxLayout()
+        self.auto_result_table = QTableWidget(0, 4)
+        self.auto_result_table.setHorizontalHeaderLabels(["CVE", "尝试端口", "成功", "成功端口"])
+        self.auto_result_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.auto_result_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        summary_layout.addWidget(self.auto_result_table)
+        summary_group.setLayout(summary_layout)
+        layout.addWidget(summary_group)
+        
         widget.setLayout(layout)
         return widget
     
     def start_auto_test(self):
         """开始自动化测试"""
-        url = self.auto_url_input.text().strip()
-        cmd = self.auto_cmd_input.text().strip() or "whoami"
-        fp_timeout = self.auto_fp_timeout_spin.value()
-        send_timeout = self.auto_send_timeout_spin.value()
-        
-        if not url:
-            QMessageBox.warning(self, "警告", "请输入目标 URL")
+        host_input = self.auto_url_input.text().strip()
+        # 使用默认参数
+        cmd = "whoami"
+        fp_timeout = 3
+        send_timeout = 10
+        if not host_input:
+            QMessageBox.warning(self, "警告", "请输入目标 IP 或 IP:端口 或 URL")
             return
-        
+
+        # 读取端口扫描复选框状态（若存在）
+        try:
+            do_port_scan = bool(self.auto_portscan_chk.isChecked())
+        except Exception:
+            do_port_scan = False
+
+        # 解析自定义端口输入（若有）
+        ports_list = None
+        ports_text = ""
+        try:
+            ports_text = self.auto_ports_input.text().strip()
+        except Exception:
+            ports_text = ""
+
+        if ports_text:
+            try:
+                if '-' in ports_text and ',' not in ports_text:
+                    start, end = ports_text.split('-', 1)
+                    ports_list = list(range(int(start.strip()), int(end.strip()) + 1))
+                else:
+                    ports_list = [int(p.strip()) for p in ports_text.split(',') if p.strip()]
+            except Exception:
+                QMessageBox.warning(self, "警告", "端口格式错误，请使用逗号分隔或范围（如 80,443 或 1-1024）")
+                # 恢复为 None，让扫描使用默认常见端口集合
+                ports_list = None
+
+        # 端口超时
+        try:
+            port_timeout = self.auto_port_timeout_spin.value()
+        except Exception:
+            port_timeout = 2
+
         # 禁用按钮
         self.auto_test_btn.setEnabled(False)
         self.auto_test_btn.setText("测试中...")
         self.auto_result_text.clear()
         
-        # 创建工作线程
-        self.auto_worker = AutoTestWorker(url, cmd, fp_timeout, send_timeout)
+        # 创建工作线程，传入端口扫描参数
+        self.auto_worker = AutoTestWorker(host_input, cmd, fp_timeout, send_timeout,
+                                         do_port_scan=do_port_scan, ports=ports_list, port_timeout=port_timeout)
         self.auto_worker.log_signal.connect(self.on_auto_test_log)
+        self.auto_worker.detail_signal.connect(self.on_auto_test_detail)
         self.auto_worker.finished.connect(self.on_auto_test_finished)
         self.auto_worker.error.connect(self.on_auto_test_error)
+        # 清空表格与日志
+        try:
+            self.auto_result_table.setRowCount(0)
+        except Exception:
+            pass
         self.auto_worker.start()
     
     def on_auto_test_log(self, msg):
@@ -819,6 +1108,25 @@ class MainWindow(QMainWindow):
         self.auto_test_btn.setText("开始自动化测试")
         self.auto_result_text.append(f"\n[!] 错误: {error_msg}")
         QMessageBox.critical(self, "错误", f"自动化测试失败: {error_msg}")
+
+    def on_auto_test_detail(self, detail: dict):
+        """收到单个 CVE 的执行详情并更新表格"""
+        try:
+            cve = detail.get("cve", "")
+            executed_ports = detail.get("executed_ports", []) or []
+            success = detail.get("success", False)
+            success_port = detail.get("success_port", None)
+
+            row = self.auto_result_table.rowCount()
+            self.auto_result_table.insertRow(row)
+
+            self.auto_result_table.setItem(row, 0, QTableWidgetItem(cve))
+            self.auto_result_table.setItem(row, 1, QTableWidgetItem(", ".join(str(p) for p in executed_ports)))
+            self.auto_result_table.setItem(row, 2, QTableWidgetItem("是" if success else "否"))
+            self.auto_result_table.setItem(row, 3, QTableWidgetItem(str(success_port) if success_port else "-"))
+        except Exception as e:
+            # 同时输出到日志，避免静默失败
+            self.auto_result_text.append(f"[!] 更新表格失败: {e}")
     
     def create_fingerprint_tab(self):
         """创建指纹-CVE映射管理标签页"""
@@ -888,7 +1196,7 @@ class MainWindow(QMainWindow):
         if get_manager is None:
             QMessageBox.warning(self, "警告", "指纹-CVE映射模块未加载")
             return
-        
+
         fingerprint = self.fp_fingerprint_input.text().strip()
         cve_id = self.fp_cve_input.text().strip() or None
         description = self.fp_description_input.text().strip() or None
@@ -1044,15 +1352,15 @@ class MainWindow(QMainWindow):
         if not packet_file:
             QMessageBox.warning(self, "警告", "请选择数据包文件")
             return
-        
+
         if not os.path.exists(packet_file):
             QMessageBox.warning(self, "警告", "数据包文件不存在")
             return
-        
+
         try:
             # 读取数据包
             packet = read_packet_file(packet_file)
-            
+
             # 拆解数据包
             self.parse_result_text.clear()
             self.parse_result_text.append("正在拆解数据包...\n")
@@ -1090,15 +1398,15 @@ class MainWindow(QMainWindow):
         if not packet_file:
             QMessageBox.warning(self, "警告", "请选择数据包文件")
             return
-        
+
         if not os.path.exists(packet_file):
             QMessageBox.warning(self, "警告", "数据包文件不存在")
             return
-        
+
         try:
             # 读取数据包
             packet = read_packet_file(packet_file)
-            
+
             # 生成模板
             self.parse_result_text.clear()
             self.parse_result_text.append("正在生成模板...\n")
