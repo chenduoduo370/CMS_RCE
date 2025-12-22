@@ -974,6 +974,32 @@ class MainWindow(QMainWindow):
         self.auto_port_timeout_spin.setValue(2)
         input_layout.addRow("端口超时(秒):", self.auto_port_timeout_spin)
         
+        # 全量端口 / 常用端口 复选框
+        self.auto_use_all_ports_chk = QCheckBox("全量端口 (1-65535)")
+        self.auto_use_all_ports_chk.setChecked(False)
+        self.auto_use_common_ports_chk = QCheckBox("常用端口")
+        self.auto_use_common_ports_chk.setChecked(True)
+        # 将两个复选框放在一行
+        hbox = QHBoxLayout()
+        hbox.addWidget(self.auto_use_all_ports_chk)
+        hbox.addWidget(self.auto_use_common_ports_chk)
+        input_layout.addRow("端口集合选项:", hbox)
+        
+        # 连接交互信号，控制互斥与启用状态
+        try:
+            self.auto_portscan_chk.toggled.connect(self.on_auto_portscan_toggled)
+            self.auto_use_all_ports_chk.toggled.connect(self.on_auto_ports_option_changed)
+            self.auto_use_common_ports_chk.toggled.connect(self.on_auto_ports_option_changed)
+            self.auto_ports_input.textChanged.connect(self.on_auto_ports_input_changed)
+        except Exception:
+            pass
+
+        # 初始根据端口扫描复选框设置控件可用性（默认未勾选端口扫描时禁用端口选项）
+        try:
+            self.on_auto_portscan_toggled(self.auto_portscan_chk.isChecked())
+        except Exception:
+            pass
+        
         input_group.setLayout(input_layout)
         layout.addWidget(input_group)
         
@@ -1060,6 +1086,20 @@ class MainWindow(QMainWindow):
         except Exception:
             port_timeout = 2
 
+        # 如果用户没有提供自定义端口，按复选框选择端口集合
+        if not ports_text:
+            try:
+                if getattr(self, "auto_use_all_ports_chk", None) and self.auto_use_all_ports_chk.isChecked():
+                    # 全量端口
+                    ports_list = list(range(1, 65536))
+                elif getattr(self, "auto_use_common_ports_chk", None) and self.auto_use_common_ports_chk.isChecked():
+                    # 常用端口：传 None 让 scan_ports 使用 COMMON_PORTS
+                    ports_list = None
+                else:
+                    ports_list = None
+            except Exception:
+                ports_list = None
+
         # 禁用按钮
         self.auto_test_btn.setEnabled(False)
         self.auto_test_btn.setText("测试中...")
@@ -1127,6 +1167,59 @@ class MainWindow(QMainWindow):
         except Exception as e:
             # 同时输出到日志，避免静默失败
             self.auto_result_text.append(f"[!] 更新表格失败: {e}")
+
+    def on_auto_portscan_toggled(self, checked: bool):
+        """启用/禁用端口相关选项"""
+        try:
+            enabled = bool(checked)
+            self.auto_ports_input.setEnabled(enabled)
+            self.auto_port_timeout_spin.setEnabled(enabled)
+            self.auto_use_all_ports_chk.setEnabled(enabled)
+            self.auto_use_common_ports_chk.setEnabled(enabled)
+            # 当禁用端口扫描时，清空表格的端口选择状态（保持默认行为）
+            if not enabled:
+                self.auto_ports_input.clear()
+                self.auto_use_all_ports_chk.setChecked(False)
+                self.auto_use_common_ports_chk.setChecked(True)
+        except Exception:
+            pass
+
+    def on_auto_ports_option_changed(self, checked: bool):
+        """处理全量/常用复选框互斥与自定义输入互斥逻辑"""
+        try:
+            # 如果用户选中全量端口，则取消常用端口选择，禁用自定义输入
+            if self.auto_use_all_ports_chk.isChecked():
+                self.auto_use_common_ports_chk.setChecked(False)
+                self.auto_ports_input.setEnabled(False)
+            elif self.auto_use_common_ports_chk.isChecked():
+                self.auto_use_all_ports_chk.setChecked(False)
+                self.auto_ports_input.setEnabled(False)
+            else:
+                # 两者都未选中，则允许自定义端口输入
+                self.auto_ports_input.setEnabled(True)
+        except Exception:
+            pass
+
+    def on_auto_ports_input_changed(self, text: str):
+        """当自定义端口输入有内容时，取消全量/常用复选框的勾选"""
+        try:
+            txt = str(text).strip()
+            if txt:
+                # 清除其他复选框，优先使用自定义端口
+                try:
+                    self.auto_use_all_ports_chk.setChecked(False)
+                    self.auto_use_common_ports_chk.setChecked(False)
+                except Exception:
+                    pass
+            else:
+                # 如果自定义输入变为空，恢复常用端口默认选中
+                try:
+                    if not self.auto_use_all_ports_chk.isChecked() and not self.auto_use_common_ports_chk.isChecked():
+                        self.auto_use_common_ports_chk.setChecked(True)
+                except Exception:
+                    pass
+        except Exception:
+            pass
     
     def create_fingerprint_tab(self):
         """创建指纹-CVE映射管理标签页"""
