@@ -493,46 +493,73 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("CVE Payload 工具 - GUI")
         self.setGeometry(100, 100, 1200, 800)
         
-        # 创建标签页
+        # 创建顶层标签页：仅保留“自动化测试”为顶层可见项，
+        # 其余功能放入“高级功能”二级标签内
         tabs = QTabWidget()
-        
-        # Payload 标签页
-        payload_tab = self.create_payload_tab()
-        tabs.addTab(payload_tab, "Payload 操作")
-        
-        # 数据包生成标签页
-        generate_tab = self.create_generate_tab()
-        tabs.addTab(generate_tab, "数据包生成")
-        
-        # Payload 列表标签页
-        list_tab = self.create_list_tab()
-        tabs.addTab(list_tab, "Payload 列表")
-        
-        # CSS MD5 标签页
-        css_md5_tab = self.create_css_md5_tab()
-        tabs.addTab(css_md5_tab, "CSS MD5 计算")
-        
-        # 端口扫描标签页
-        portscan_tab = self.create_portscan_tab()
-        tabs.addTab(portscan_tab, "端口扫描")
-        
-        # 指纹-CVE映射管理标签页
+
+        # 自动化测试（仍为顶层标签）
+        if get_css_files_md5_from_page is not None:
+            auto_tab = self.create_auto_test_tab()
+            tabs.addTab(auto_tab, "自动化测试")
+        else:
+            # 如果自动化测试功能未加载，仍创建一个占位标签以保持界面一致
+            placeholder = QWidget()
+            placeholder_layout = QVBoxLayout()
+            placeholder_layout.addWidget(QLabel("自动化测试功能未加载"))
+            placeholder.setLayout(placeholder_layout)
+            tabs.addTab(placeholder, "自动化测试")
+
+        # 高级功能：将原有的多个功能收纳到此二级标签的内部 tabs 中
+        advanced_widget = QWidget()
+        advanced_layout = QVBoxLayout()
+        inner_tabs = QTabWidget()
+
+        # 将原来的功能页添加到内部标签页（高级功能）
+        try:
+            payload_tab = self.create_payload_tab()
+            inner_tabs.addTab(payload_tab, "Payload 操作")
+        except Exception:
+            pass
+
+        try:
+            generate_tab = self.create_generate_tab()
+            inner_tabs.addTab(generate_tab, "数据包生成")
+        except Exception:
+            pass
+
+        try:
+            list_tab = self.create_list_tab()
+            inner_tabs.addTab(list_tab, "Payload 列表")
+        except Exception:
+            pass
+
+        try:
+            css_md5_tab = self.create_css_md5_tab()
+            inner_tabs.addTab(css_md5_tab, "CSS MD5 计算")
+        except Exception:
+            pass
+
+        try:
+            portscan_tab = self.create_portscan_tab()
+            inner_tabs.addTab(portscan_tab, "端口扫描")
+        except Exception:
+            pass
+
+        # 指纹映射页仍需要 get_manager 可用
         if get_manager is not None:
             try:
-                # 使用模块化构建函数，避免类方法依赖导致的问题
                 mapping_tab = build_fingerprint_tab(get_manager())
-                tabs.addTab(mapping_tab, "指纹-CVE映射")
+                inner_tabs.addTab(mapping_tab, "指纹-CVE映射")
             except Exception as e:
                 try:
                     print(f"[!] 无法创建指纹映射标签页: {e}", flush=True)
                 except Exception:
                     pass
-        
-        # 自动化测试标签页
-        if get_css_files_md5_from_page is not None:
-            auto_tab = self.create_auto_test_tab()
-            tabs.addTab(auto_tab, "自动化测试")
-        
+
+        advanced_layout.addWidget(inner_tabs)
+        advanced_widget.setLayout(advanced_layout)
+        tabs.addTab(advanced_widget, "高级功能")
+
         self.setCentralWidget(tabs)
     
     def create_payload_tab(self):
