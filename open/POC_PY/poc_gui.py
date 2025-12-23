@@ -14,6 +14,17 @@ import json
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, current_dir)
 
+def resource_path(relative_path: str) -> str:
+    """
+    Resolve a path to a bundled resource both in development and when
+    the application is packaged by PyInstaller (--onefile).
+    """
+    if getattr(sys, "frozen", False):
+        base_path = sys._MEIPASS
+    else:
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base_path, relative_path)
+
 try:
     from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                                  QHBoxLayout, QTabWidget, QLabel, QLineEdit,

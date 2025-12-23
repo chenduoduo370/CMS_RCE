@@ -6,6 +6,7 @@
 """
 
 import os
+import sys
 import json
 from typing import Dict, Optional, List
 from dataclasses import dataclass, asdict
@@ -30,8 +31,11 @@ class FingerprintCVEManager:
             config_file: 配置文件路径，默认为当前目录下的 fingerprint_cve_mapping.json
         """
         if config_file is None:
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            config_file = os.path.join(current_dir, "fingerprint_cve_mapping.json")
+            if getattr(sys, "frozen", False):
+                base_dir = sys._MEIPASS
+            else:
+                base_dir = os.path.dirname(os.path.abspath(__file__))
+            config_file = os.path.join(base_dir, "fingerprint_cve_mapping.json")
         
         self.config_file = config_file
         self.mappings: Dict[str, FingerprintCVEMapping] = {}
