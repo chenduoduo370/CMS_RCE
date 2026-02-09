@@ -2380,28 +2380,28 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName("CVE Payload Tool")
 
-    # 应用级按钮样式（统一美化）
+    # 应用级按钮样式（统一美化 - 黑体字体）
     app.setStyleSheet("""
-        /* Global font settings (稍微调小以避免被裁剪) */
+        /* Global font settings (黑体，更小字号) */
         QWidget {
-            font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-            font-size: 10pt;
+            font-family: "Microsoft YaHei", "SimHei", "Heiti SC", sans-serif;
+            font-size: 9pt;
             color: #222222;
         }
         QLabel, QLineEdit, QComboBox, QSpinBox, QPushButton {
-            font-size: 10pt;
+            font-size: 9pt;
         }
         QTextEdit, QListWidget, QTableWidget, QHeaderView {
             font-family: "Consolas", "Courier New", monospace;
-            font-size: 9pt;
+            font-size: 8pt;
         }
 
         QPushButton {
             background: #f5f6f8;
             border: 1px solid #cfcfcf;
-            padding: 6px 10px;
-            border-radius: 6px;
-            min-height: 26px;
+            padding: 5px 8px;
+            border-radius: 5px;
+            min-height: 24px;
         }
         QPushButton:hover {
             background: #e8f0ff;
@@ -2423,9 +2423,9 @@ def main():
             background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #4caf50, stop:1 #3e8e41);
             color: white;
             border: none;
-            padding: 6px 10px;
-            border-radius: 6px;
-            min-height: 26px;
+            padding: 5px 8px;
+            border-radius: 5px;
+            min-height: 24px;
             font-weight: 600;
         }
         QPushButton[role="operation"]:hover {
@@ -2442,11 +2442,11 @@ def main():
         QTabBar::tab {
             background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #fafafa, stop:1 #f0f0f0);
             border: 1px solid #d0d0d0;
-            padding: 6px 12px;
-            margin-right: 4px;
-            border-top-left-radius: 6px;
-            border-top-right-radius: 6px;
-            min-width: 88px;
+            padding: 5px 10px;
+            margin-right: 3px;
+            border-top-left-radius: 5px;
+            border-top-right-radius: 5px;
+            min-width: 80px;
             font-weight: 600;
         }
         QTabBar::tab:hover {
@@ -2460,20 +2460,20 @@ def main():
         /* Group box title styling for section headers */
         QGroupBox {
             border: 1px solid #e0e0e0;
-            border-radius: 6px;
-            margin-top: 12px;
+            border-radius: 5px;
+            margin-top: 10px;
         }
         QGroupBox::title {
             subcontrol-origin: margin;
-            left: 10px;
-            padding: 0 6px;
+            left: 8px;
+            padding: 0 5px;
             color: #333333;
             font-weight: 700;
         }
     """)
-    # Set application default font to match stylesheet (稍微调小)
+    # Set application default font to match stylesheet (黑体，更小字号)
     try:
-        app.setFont(QFont("Segoe UI", 10))
+        app.setFont(QFont("Microsoft YaHei", 9))
     except Exception:
         pass
 
