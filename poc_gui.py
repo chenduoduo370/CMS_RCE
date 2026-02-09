@@ -597,23 +597,38 @@ class MainWindow(QMainWindow):
         input_group.setLayout(input_layout)
         layout.addWidget(input_group)
         
-        # 按钮区域
+        # 按钮区域（包装在小边框中）
         button_layout = QHBoxLayout()
         
         self.show_btn = QPushButton("显示 Payload")
         self.show_btn.clicked.connect(self.show_payload)
+        # 美化为操作类按钮
+        try:
+            self.show_btn.setProperty("role", "operation")
+        except Exception:
+            pass
         button_layout.addWidget(self.show_btn)
         
         self.send_btn = QPushButton("发送 Payload")
+        # 主要操作按钮美化
+        self.send_btn.setObjectName("primary")
         self.send_btn.clicked.connect(self.send_payload)
         button_layout.addWidget(self.send_btn)
         
         self.refresh_btn = QPushButton("刷新列表")
         self.refresh_btn.clicked.connect(self.refresh_payload_list)
+        try:
+            self.refresh_btn.setProperty("role", "operation")
+        except Exception:
+            pass
         button_layout.addWidget(self.refresh_btn)
         
         button_layout.addStretch()
-        layout.addLayout(button_layout)
+        btn_group = QGroupBox()
+        btn_group.setTitle("")  # 小边框，无标题
+        btn_group.setLayout(button_layout)
+        btn_group.setStyleSheet("QGroupBox { border: 1px solid #d0d0d0; padding:6px; border-radius:4px; }")
+        layout.addWidget(btn_group)
         
         # 结果显示区域
         result_group = QGroupBox("结果显示")
@@ -677,7 +692,7 @@ class MainWindow(QMainWindow):
         input_group.setLayout(input_layout)
         layout.addWidget(input_group)
         
-        # 按钮区域
+        # 按钮区域（包装在小边框中）
         button_layout = QHBoxLayout()
         
         self.parse_btn = QPushButton("拆解数据包")
@@ -687,9 +702,14 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 QMessageBox.warning(self, "错误", f"拆解功能暂不可用: {e}")
         self.parse_btn.clicked.connect(_on_parse_btn_clicked)
+        try:
+            self.parse_btn.setProperty("role", "operation")
+        except Exception:
+            pass
         button_layout.addWidget(self.parse_btn)
         
         self.generate_btn = QPushButton("生成并保存模板")
+        self.generate_btn.setObjectName("primary")
         def _on_generate_btn_clicked():
             try:
                 return self.generate_template()
@@ -699,7 +719,11 @@ class MainWindow(QMainWindow):
         button_layout.addWidget(self.generate_btn)
         
         button_layout.addStretch()
-        layout.addLayout(button_layout)
+        btn_group = QGroupBox()
+        btn_group.setTitle("")
+        btn_group.setLayout(button_layout)
+        btn_group.setStyleSheet("QGroupBox { border: 1px solid #d0d0d0; padding:6px; border-radius:4px; }")
+        layout.addWidget(btn_group)
         
         # 结果显示区域
         result_group = QGroupBox("拆解结果")
@@ -721,15 +745,23 @@ class MainWindow(QMainWindow):
         widget = QWidget()
         layout = QVBoxLayout()
         
-        # 按钮区域
+        # 按钮区域（包装在小边框中）
         button_layout = QHBoxLayout()
         
         refresh_list_btn = QPushButton("刷新列表")
         refresh_list_btn.clicked.connect(self.refresh_payload_list_in_tab)
+        try:
+            refresh_list_btn.setProperty("role", "operation")
+        except Exception:
+            pass
         button_layout.addWidget(refresh_list_btn)
         
         button_layout.addStretch()
-        layout.addLayout(button_layout)
+        btn_group = QGroupBox()
+        btn_group.setTitle("")
+        btn_group.setLayout(button_layout)
+        btn_group.setStyleSheet("QGroupBox { border: 1px solid #d0d0d0; padding:6px; border-radius:4px; }")
+        layout.addWidget(btn_group)
         
         # 列表显示
         self.payload_list = QListWidget()
@@ -978,15 +1010,20 @@ class MainWindow(QMainWindow):
         input_group.setLayout(input_layout)
         layout.addWidget(input_group)
         
-        # 按钮区域
+        # 按钮区域（包装在小边框中）
         button_layout = QHBoxLayout()
         
         self.css_calculate_btn = QPushButton("计算 CSS MD5")
+        self.css_calculate_btn.setObjectName("primary")
         self.css_calculate_btn.clicked.connect(self.calculate_css_md5)
         button_layout.addWidget(self.css_calculate_btn)
         
         button_layout.addStretch()
-        layout.addLayout(button_layout)
+        btn_group = QGroupBox()
+        btn_group.setTitle("")
+        btn_group.setLayout(button_layout)
+        btn_group.setStyleSheet("QGroupBox { border: 1px solid #d0d0d0; padding:6px; border-radius:4px; }")
+        layout.addWidget(btn_group)
         
         # 结果显示区域
         result_group = QGroupBox("结果显示")
@@ -1113,18 +1150,27 @@ class MainWindow(QMainWindow):
         input_group.setLayout(input_layout)
         layout.addWidget(input_group)
 
-        # 按钮区域
+        # 按钮区域（包装在小边框中）
         button_layout = QHBoxLayout()
         self.portscan_start_btn = QPushButton("开始扫描")
+        self.portscan_start_btn.setObjectName("primary")
         self.portscan_start_btn.clicked.connect(self.start_port_scan)
         button_layout.addWidget(self.portscan_start_btn)
 
         self.portscan_clear_btn = QPushButton("清空结果")
         self.portscan_clear_btn.clicked.connect(lambda: self.portscan_result_text.clear())
+        try:
+            self.portscan_clear_btn.setProperty("role", "operation")
+        except Exception:
+            pass
         button_layout.addWidget(self.portscan_clear_btn)
 
         button_layout.addStretch()
-        layout.addLayout(button_layout)
+        btn_group = QGroupBox()
+        btn_group.setTitle("")
+        btn_group.setLayout(button_layout)
+        btn_group.setStyleSheet("QGroupBox { border: 1px solid #d0d0d0; padding:6px; border-radius:4px; }")
+        layout.addWidget(btn_group)
 
         # 结果显示区域
         result_group = QGroupBox("扫描结果")
@@ -1265,19 +1311,28 @@ class MainWindow(QMainWindow):
         input_group.setLayout(input_layout)
         layout.addWidget(input_group)
         
-        # 按钮区域
+        # 按钮区域（包装在小边框中）
         button_layout = QHBoxLayout()
         
         self.auto_test_btn = QPushButton("开始自动化测试")
+        self.auto_test_btn.setObjectName("primary")
         self.auto_test_btn.clicked.connect(self.start_auto_test)
         button_layout.addWidget(self.auto_test_btn)
         
         self.auto_clear_btn = QPushButton("清空日志")
         self.auto_clear_btn.clicked.connect(lambda: self.auto_result_text.clear())
+        try:
+            self.auto_clear_btn.setProperty("role", "operation")
+        except Exception:
+            pass
         button_layout.addWidget(self.auto_clear_btn)
         
         button_layout.addStretch()
-        layout.addLayout(button_layout)
+        btn_group = QGroupBox()
+        btn_group.setTitle("")
+        btn_group.setLayout(button_layout)
+        btn_group.setStyleSheet("QGroupBox { border: 1px solid #d0d0d0; padding:6px; border-radius:4px; }")
+        layout.addWidget(btn_group)
         
         # 结果显示区域
         result_group = QGroupBox("执行日志")
@@ -1702,8 +1757,16 @@ class CommandExecutionDialog(QDialog):
         self.cmd_input.setPlaceholderText("输入要执行的命令，例如: whoami")
         cmd_layout.addWidget(self.cmd_input)
         self.exec_btn = QPushButton("执行")
+        try:
+            self.exec_btn.setProperty("role", "operation")
+        except Exception:
+            pass
         cmd_layout.addWidget(self.exec_btn)
         self.exec_and_keep_btn = QPushButton("执行并保留窗口")
+        try:
+            self.exec_and_keep_btn.setProperty("role", "operation")
+        except Exception:
+            pass
         cmd_layout.addWidget(self.exec_and_keep_btn)
         layout.addLayout(cmd_layout)
 
@@ -1762,8 +1825,16 @@ class BatchCommandDialog(QDialog):
         self.cmd_input_batch.setPlaceholderText("输入要对选中 CVE 执行的命令，例如: whoami")
         cmd_h.addWidget(self.cmd_input_batch)
         self.exec_btn_batch = QPushButton("执行所选")
+        try:
+            self.exec_btn_batch.setProperty("role", "operation")
+        except Exception:
+            pass
         cmd_h.addWidget(self.exec_btn_batch)
         self.exec_btn_batch_cancel = QPushButton("执行所选并关闭")
+        try:
+            self.exec_btn_batch_cancel.setProperty("role", "operation")
+        except Exception:
+            pass
         cmd_h.addWidget(self.exec_btn_batch_cancel)
         layout.addLayout(cmd_h)
 
@@ -1999,10 +2070,11 @@ class BatchCommandDialog(QDialog):
         input_group.setLayout(input_layout)
         layout.addWidget(input_group)
         
-        # 按钮区域
+        # 按钮区域（包装在小边框中）
         button_layout = QHBoxLayout()
         
         self.fp_add_btn = QPushButton("添加/更新映射")
+        self.fp_add_btn.setObjectName("primary")
         self.fp_add_btn.clicked.connect(self.add_fingerprint_mapping)
         button_layout.addWidget(self.fp_add_btn)
         
@@ -2015,7 +2087,11 @@ class BatchCommandDialog(QDialog):
         button_layout.addWidget(self.fp_refresh_btn)
         
         button_layout.addStretch()
-        layout.addLayout(button_layout)
+        btn_group = QGroupBox()
+        btn_group.setTitle("")
+        btn_group.setLayout(button_layout)
+        btn_group.setStyleSheet("QGroupBox { border: 1px solid #d0d0d0; padding:6px; border-radius:4px; }")
+        layout.addWidget(btn_group)
         
         # 映射列表区域
         list_group = QGroupBox("映射列表")
@@ -2303,7 +2379,104 @@ def main():
     
     app = QApplication(sys.argv)
     app.setApplicationName("CVE Payload Tool")
-    
+
+    # 应用级按钮样式（统一美化）
+    app.setStyleSheet("""
+        /* Global font settings (稍微调小以避免被裁剪) */
+        QWidget {
+            font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+            font-size: 10pt;
+            color: #222222;
+        }
+        QLabel, QLineEdit, QComboBox, QSpinBox, QPushButton {
+            font-size: 10pt;
+        }
+        QTextEdit, QListWidget, QTableWidget, QHeaderView {
+            font-family: "Consolas", "Courier New", monospace;
+            font-size: 9pt;
+        }
+
+        QPushButton {
+            background: #f5f6f8;
+            border: 1px solid #cfcfcf;
+            padding: 6px 10px;
+            border-radius: 6px;
+            min-height: 26px;
+        }
+        QPushButton:hover {
+            background: #e8f0ff;
+            border: 1px solid #b8d1ff;
+        }
+        QPushButton:pressed {
+            background: #d0e3ff;
+        }
+        QPushButton#primary {
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #2d89ef, stop:1 #1f6fd6);
+            color: white;
+            border: none;
+        }
+        QPushButton#primary:hover {
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #3b98ff, stop:1 #2a82da);
+        }
+        /* Operation buttons used for payload actions, view, parse, save, etc. */
+        QPushButton[role="operation"] {
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #4caf50, stop:1 #3e8e41);
+            color: white;
+            border: none;
+            padding: 6px 10px;
+            border-radius: 6px;
+            min-height: 26px;
+            font-weight: 600;
+        }
+        QPushButton[role="operation"]:hover {
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #5ec46a, stop:1 #48a24b);
+        }
+        QPushButton[role="operation"]:pressed {
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #3b8f45, stop:1 #35773a);
+        }
+        /* Tab bar and tab styling for top-level and inner tabs (美化高级功能/自动化测试标签) */
+        QTabWidget::pane { /* The tab widget frame */
+            border-top: 1px solid #cfcfcf;
+            background: #ffffff;
+        }
+        QTabBar::tab {
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #fafafa, stop:1 #f0f0f0);
+            border: 1px solid #d0d0d0;
+            padding: 6px 12px;
+            margin-right: 4px;
+            border-top-left-radius: 6px;
+            border-top-right-radius: 6px;
+            min-width: 88px;
+            font-weight: 600;
+        }
+        QTabBar::tab:hover {
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ffffff, stop:1 #eef6ff);
+        }
+        QTabBar::tab:selected {
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #2d89ef, stop:1 #1f6fd6);
+            color: white;
+            border-bottom-color: transparent;
+        }
+        /* Group box title styling for section headers */
+        QGroupBox {
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+            margin-top: 12px;
+        }
+        QGroupBox::title {
+            subcontrol-origin: margin;
+            left: 10px;
+            padding: 0 6px;
+            color: #333333;
+            font-weight: 700;
+        }
+    """)
+    # Set application default font to match stylesheet (稍微调小)
+    try:
+        app.setFont(QFont("Segoe UI", 10))
+    except Exception:
+        pass
+
     window = MainWindow()
     window.show()
     
