@@ -1,21 +1,32 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-文件MD5计算模块
-通过URL下载文件并计算MD5哈希值
-支持从HTML页面提取CSS文件并计算MD5
+Web指纹识别模块
+支持多种指纹识别方式：
+1. 文件哈希指纹（MD5/SHA1/SHA256）
+2. HTTP响应头指纹（Server, X-Powered-By等）
+3. 静态资源指纹（CSS/JS/图片/字体等）
 """
 
 import hashlib
 import re
+import sys
+import os
 from html.parser import HTMLParser
-from typing import Optional, List, Dict, Tuple
-from urllib.parse import urljoin
+from typing import Optional, List, Dict, Tuple, Set
+from urllib.parse import urljoin, urlparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 
+# 添加src目录到路径
+current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(current_dir, 'src'))
+
 try:
     from fingerprint_cve_mapping import get_manager
+    from src.exceptions import FingerprintError, NetworkError
+    from src.config import Config
     _cve_manager = None
     def _get_cve_manager():
         global _cve_manager
@@ -23,173 +34,503 @@ try:
             _cve_manager = get_manager()
         return _cve_manager
 except ImportError:
+    # 后备方案
+    class FingerprintError(Exception):
+        """指纹识别错误异常"""
+        pass
+
+    class NetworkError(Exception):
+        """网络请求失败异常"""
+        pass
+
+    class Config:
+        """配置类（后备方案）"""
+        DEFAULT_REQUEST_TIMEOUT = 10
+        FINGERPRINT_TIMEOUT = 3.0
+        DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        VERIFY_SSL = False
+
     _get_cve_manager = None
 
 
-def calculate_file_md5_from_url(url: str, timeout: float = 3.0) -> Optional[str]:
+# 支持的哈希算法
+HASH_ALGORITHMS = {
+    'md5': hashlib.md5,
+    'sha1': hashlib.sha1,
+    'sha256': hashlib.sha256,
+}
+
+# 常见的指纹识别HTTP头
+FINGERPRINT_HEADERS = [
+    'Server',
+    'X-Powered-By',
+    'X-Generator',
+    'X-AspNet-Version',
+    'X-AspNetMvc-Version',
+    'X-Drupal-Cache',
+    'X-Drupal-Dynamic-Cache',
+    'X-Varnish',
+    'X-Nginx-Cache-Status',
+    'X-Cache',
+    'X-Runtime',
+    'X-Version',
+]
+
+
+def calculate_file_hash(content: bytes, algorithm: str = 'md5') -> str:
     """
-    通过URL下载文件并计算MD5值。
-    
+    计算文件内容的哈希值
+
     Args:
-        url: 文件的完整URL（如 http://192.168.1.1:80/core/CHANGELOG.txt）
-        timeout: 请求超时时间（秒）
-    
+        content: 文件内容（字节）
+        algorithm: 哈希算法（md5/sha1/sha256）
+
     Returns:
-        文件的MD5哈希值（32位十六进制字符串），如果获取失败则返回None
+        哈希值（十六进制字符串）
+
+    Raises:
+        FingerprintError: 不支持的哈希算法
     """
+    if algorithm not in HASH_ALGORITHMS:
+        raise FingerprintError(f"不支持的哈希算法: {algorithm}")
+
+    hash_func = HASH_ALGORITHMS[algorithm]()
+    hash_func.update(content)
+    return hash_func.hexdigest()
+
+
+def calculate_file_hash_from_url(url: str, timeout: float = None,
+                                 algorithm: str = 'md5') -> Optional[str]:
+    """
+    通过URL下载文件并计算哈希值
+
+    Args:
+        url: 文件的完整URL
+        timeout: 请求超时时间（秒），默认使用Config配置
+        algorithm: 哈希算法（md5/sha1/sha256）
+
+    Returns:
+        文件的哈希值，如果获取失败则返回None
+
+    Raises:
+        NetworkError: 网络请求失败
+        FingerprintError: 哈希计算失败
+    """
+    if timeout is None:
+        timeout = Config.FINGERPRINT_TIMEOUT
+
     try:
-        response = requests.get(url, timeout=timeout, verify=False, allow_redirects=True)
+        headers = {'User-Agent': Config.DEFAULT_USER_AGENT}
+        response = requests.get(
+            url,
+            timeout=timeout,
+            verify=Config.VERIFY_SSL,
+            allow_redirects=True,
+            headers=headers
+        )
+
         if response.status_code != 200:
             return None
-        
-        # 获取文件内容（二进制）
-        content = response.content
-        # 计算MD5
-        md5_hash = hashlib.md5(content).hexdigest()
-        return md5_hash
-    except Exception:
+
+        return calculate_file_hash(response.content, algorithm)
+
+    except requests.exceptions.Timeout:
+        raise NetworkError(f"请求超时: {url}")
+    except requests.exceptions.ConnectionError:
+        raise NetworkError(f"连接失败: {url}")
+    except requests.exceptions.RequestException as e:
+        raise NetworkError(f"请求失败: {url} - {e}")
+    except Exception as e:
+        raise FingerprintError(f"哈希计算失败: {e}")
+
+
+def get_file_md5(url: str, timeout: float = None) -> Optional[str]:
+    """
+    便捷函数：通过URL获取指定文件的MD5值
+
+    Args:
+        url: 文件的完整URL
+        timeout: 请求超时时间（秒）
+
+    Returns:
+        文件的MD5哈希值，如果获取失败则返回None
+    """
+    try:
+        return calculate_file_hash_from_url(url, timeout, 'md5')
+    except (NetworkError, FingerprintError):
         return None
 
 
-def get_file_md5(url: str, timeout: float = 3.0) -> Optional[str]:
+def get_file_md5_with_cve(url: str, timeout: float = None) -> Tuple[Optional[str], Optional[str]]:
     """
-    便捷函数：通过URL获取指定文件的MD5值。
-    
-    Args:
-        url: 文件的完整URL（如 http://192.168.1.1:80/core/CHANGELOG.txt）
-        timeout: 请求超时时间（秒）
-    
-    Returns:
-        文件的MD5哈希值（32位十六进制字符串），如果获取失败则返回None
-    """
-    return calculate_file_md5_from_url(url, timeout)
+    通过URL获取指定文件的MD5值，并查找对应的CVE
 
-
-def get_file_md5_with_cve(url: str, timeout: float = 3.0) -> Tuple[Optional[str], Optional[str]]:
-    """
-    通过URL获取指定文件的MD5值，并查找对应的CVE。
-    
     Args:
-        url: 文件的完整URL（如 http://192.168.1.1:80/core/CHANGELOG.txt）
+        url: 文件的完整URL
         timeout: 请求超时时间（秒）
-    
+
     Returns:
         元组(MD5哈希值, CVE编号)
-        如果MD5计算失败，MD5为None；如果找不到对应的CVE，CVE为None
     """
-    md5_hash = calculate_file_md5_from_url(url, timeout)
-    cve_id = None
-    
-    # 如果计算出了MD5，尝试查找对应的CVE
-    if md5_hash:
-        cve_manager = _get_cve_manager() if _get_cve_manager else None
-        if cve_manager:
-            cve_id = cve_manager.get_cve(md5_hash)
-    
-    return (md5_hash, cve_id)
+    try:
+        md5_hash = calculate_file_hash_from_url(url, timeout, 'md5')
+        cve_id = None
+
+        if md5_hash and _get_cve_manager:
+            cve_manager = _get_cve_manager()
+            if cve_manager:
+                cve_id = cve_manager.get_cve(md5_hash)
+
+        return (md5_hash, cve_id)
+    except (NetworkError, FingerprintError):
+        return (None, None)
 
 
-class CSSLinkExtractor(HTMLParser):
-    """HTML解析器，用于提取CSS文件链接"""
-    
+def extract_http_headers_fingerprint(url: str, timeout: float = None) -> Dict[str, str]:
+    """
+    提取HTTP响应头中的指纹信息
+
+    Args:
+        url: 目标URL
+        timeout: 请求超时时间（秒）
+
+    Returns:
+        包含指纹信息的字典
+
+    Raises:
+        NetworkError: 网络请求失败
+    """
+    if timeout is None:
+        timeout = Config.FINGERPRINT_TIMEOUT
+
+    fingerprints = {}
+
+    try:
+        headers = {'User-Agent': Config.DEFAULT_USER_AGENT}
+        response = requests.get(
+            url,
+            timeout=timeout,
+            verify=Config.VERIFY_SSL,
+            allow_redirects=True,
+            headers=headers
+        )
+
+        # 提取指纹相关的HTTP头
+        for header in FINGERPRINT_HEADERS:
+            value = response.headers.get(header)
+            if value:
+                fingerprints[header] = value
+
+        return fingerprints
+
+    except requests.exceptions.Timeout:
+        raise NetworkError(f"请求超时: {url}")
+    except requests.exceptions.ConnectionError:
+        raise NetworkError(f"连接失败: {url}")
+    except requests.exceptions.RequestException as e:
+        raise NetworkError(f"请求失败: {url} - {e}")
+
+
+class ResourceExtractor(HTMLParser):
+    """HTML解析器，用于提取各种静态资源链接"""
+
     def __init__(self, base_url: str):
         super().__init__()
         self.base_url = base_url
-        self.css_links: List[str] = []
-    
+        self.css_links: Set[str] = set()
+        self.js_links: Set[str] = set()
+        self.img_links: Set[str] = set()
+        self.font_links: Set[str] = set()
+
     def handle_starttag(self, tag, attrs):
+        attrs_dict = dict(attrs)
+
+        # CSS文件
         if tag.lower() == 'link':
-            attrs_dict = dict(attrs)
             rel = attrs_dict.get('rel', '').lower()
             href = attrs_dict.get('href', '')
-            
-            # 检查是否是stylesheet链接
+
             if rel == 'stylesheet' and href:
-                # 将相对路径转换为绝对URL
                 absolute_url = urljoin(self.base_url, href)
-                self.css_links.append(absolute_url)
-        
-        # 也检查style标签中的@import
-        elif tag.lower() == 'style':
-            # style标签的内容会在handle_data中处理
-            pass
+                self.css_links.add(absolute_url)
+
+        # JavaScript文件
+        elif tag.lower() == 'script':
+            src = attrs_dict.get('src', '')
+            if src:
+                absolute_url = urljoin(self.base_url, src)
+                self.js_links.add(absolute_url)
+
+        # 图片文件
+        elif tag.lower() == 'img':
+            src = attrs_dict.get('src', '')
+            if src:
+                absolute_url = urljoin(self.base_url, src)
+                self.img_links.add(absolute_url)
 
 
-def extract_css_links_from_html(html_content: str, base_url: str) -> List[str]:
+def extract_resources_from_html(html_content: str, base_url: str) -> Dict[str, List[str]]:
     """
-    从HTML内容中提取所有CSS文件链接。
-    
+    从HTML内容中提取所有静态资源链接
+
     Args:
         html_content: HTML页面内容
-        base_url: 基础URL，用于将相对路径转换为绝对URL
-    
+        base_url: 基础URL
+
     Returns:
-        CSS文件URL列表
+        资源字典，包含 css, js, img, font 等类型
     """
-    parser = CSSLinkExtractor(base_url)
+    parser = ResourceExtractor(base_url)
     parser.feed(html_content)
-    
+
     # 也检查style标签中的@import规则
     import_pattern = r'@import\s+(?:url\()?["\']?([^"\']+)["\']?\)?'
     import_matches = re.findall(import_pattern, html_content, re.IGNORECASE)
     for match in import_matches:
         absolute_url = urljoin(base_url, match)
-        if absolute_url not in parser.css_links:
-            parser.css_links.append(absolute_url)
-    
-    return parser.css_links
+        parser.css_links.add(absolute_url)
+
+    # 检查字体文件（通常在CSS中引用，但也可能在HTML中）
+    font_pattern = r'url\(["\']?([^"\']+\.(?:woff2?|ttf|eot|otf))["\']?\)'
+    font_matches = re.findall(font_pattern, html_content, re.IGNORECASE)
+    for match in font_matches:
+        absolute_url = urljoin(base_url, match)
+        parser.font_links.add(absolute_url)
+
+    return {
+        'css': list(parser.css_links),
+        'js': list(parser.js_links),
+        'img': list(parser.img_links),
+        'font': list(parser.font_links),
+    }
 
 
-def get_css_files_md5_from_page(page_url: str, timeout: float = 3.0) -> Dict[str, Tuple[Optional[str], Optional[str]]]:
+def extract_css_links_from_html(html_content: str, base_url: str) -> List[str]:
     """
-    访问指定页面，提取所有CSS文件链接，下载并计算每个CSS文件的MD5值，并查找对应的CVE。
-    
+    从HTML内容中提取所有CSS文件链接（向后兼容）
+
     Args:
-        page_url: 要访问的页面URL（如 http://192.168.1.1:80/）
+        html_content: HTML页面内容
+        base_url: 基础URL
+
+    Returns:
+        CSS文件URL列表
+    """
+    resources = extract_resources_from_html(html_content, base_url)
+    return resources['css']
+
+
+def get_css_files_md5_from_page(page_url: str, timeout: float = None) -> Dict[str, Tuple[Optional[str], Optional[str]]]:
+    """
+    访问指定页面，提取所有CSS文件链接，下载并计算每个CSS文件的MD5值，并查找对应的CVE
+    （向后兼容函数）
+
+    Args:
+        page_url: 要访问的页面URL
         timeout: 请求超时时间（秒）
-    
+
     Returns:
         字典，键为CSS文件URL，值为元组(MD5哈希值, CVE编号)
-        如果MD5计算失败，MD5为None；如果找不到对应的CVE，CVE为None
     """
-    result: Dict[str, Tuple[Optional[str], Optional[str]]] = {}
-    
+    result = get_resources_fingerprint_from_page(
+        page_url,
+        timeout=timeout,
+        resource_types=['css'],
+        algorithms=['md5']
+    )
+
+    # 转换格式以保持向后兼容
+    css_result = {}
+    for url, hashes in result.items():
+        md5_hash = hashes.get('md5')
+        cve_id = hashes.get('cve')
+        css_result[url] = (md5_hash, cve_id)
+
+    return css_result
+
+
+def get_resources_fingerprint_from_page(
+    page_url: str,
+    timeout: float = None,
+    resource_types: List[str] = None,
+    algorithms: List[str] = None,
+    max_workers: int = 5
+) -> Dict[str, Dict[str, Optional[str]]]:
+    """
+    访问指定页面，提取静态资源并计算指纹
+
+    Args:
+        page_url: 要访问的页面URL
+        timeout: 请求超时时间（秒）
+        resource_types: 要提取的资源类型列表，默认 ['css', 'js']
+        algorithms: 要使用的哈希算法列表，默认 ['md5']
+        max_workers: 最大并发下载数
+
+    Returns:
+        字典，键为资源URL，值为包含各种哈希值和CVE的字典
+        例如: {
+            'http://example.com/style.css': {
+                'md5': 'abc123...',
+                'sha1': 'def456...',
+                'cve': 'CVE-2019-1234'
+            }
+        }
+
+    Raises:
+        NetworkError: 网络请求失败
+    """
+    if timeout is None:
+        timeout = Config.FINGERPRINT_TIMEOUT
+
+    if resource_types is None:
+        resource_types = ['css', 'js']
+
+    if algorithms is None:
+        algorithms = ['md5']
+
+    result: Dict[str, Dict[str, Optional[str]]] = {}
+
     try:
         # 访问页面
-        response = requests.get(page_url, timeout=timeout, verify=False, allow_redirects=True)
+        headers = {'User-Agent': Config.DEFAULT_USER_AGENT}
+        response = requests.get(
+            page_url,
+            timeout=timeout,
+            verify=Config.VERIFY_SSL,
+            allow_redirects=True,
+            headers=headers
+        )
+
         if response.status_code != 200:
             return result
-        
-        # 解析HTML，提取CSS链接
+
+        # 解析HTML，提取资源链接
         html_content = response.text
-        css_links = extract_css_links_from_html(html_content, page_url)
-        
-        if not css_links:
+        resources = extract_resources_from_html(html_content, page_url)
+
+        # 收集需要下载的资源URL
+        urls_to_download = []
+        for res_type in resource_types:
+            if res_type in resources:
+                urls_to_download.extend(resources[res_type])
+
+        if not urls_to_download:
             return result
-        
+
         # 获取CVE管理器（如果可用）
         cve_manager = _get_cve_manager() if _get_cve_manager else None
-        
-        # 下载每个CSS文件并计算MD5，同时查找对应的CVE
-        for css_url in css_links:
-            md5_hash = calculate_file_md5_from_url(css_url, timeout)
-            cve_id = None
-            
-            # 如果计算出了MD5，尝试查找对应的CVE
-            if md5_hash and cve_manager:
-                cve_id = cve_manager.get_cve(md5_hash)
-            
-            result[css_url] = (md5_hash, cve_id)
-        
+
+        # 并发下载资源并计算哈希
+        def download_and_hash(url: str) -> Tuple[str, Dict[str, Optional[str]]]:
+            hashes = {}
+            try:
+                resp = requests.get(
+                    url,
+                    timeout=timeout,
+                    verify=Config.VERIFY_SSL,
+                    headers=headers
+                )
+
+                if resp.status_code == 200:
+                    content = resp.content
+
+                    # 计算所有请求的哈希算法
+                    for algo in algorithms:
+                        try:
+                            hashes[algo] = calculate_file_hash(content, algo)
+                        except FingerprintError:
+                            hashes[algo] = None
+
+                    # 如果计算了MD5，尝试查找对应的CVE
+                    if 'md5' in hashes and hashes['md5'] and cve_manager:
+                        hashes['cve'] = cve_manager.get_cve(hashes['md5'])
+                    else:
+                        hashes['cve'] = None
+
+            except Exception:
+                # 下载失败，返回空哈希
+                for algo in algorithms:
+                    hashes[algo] = None
+                hashes['cve'] = None
+
+            return (url, hashes)
+
+        # 使用线程池并发下载
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(download_and_hash, url) for url in urls_to_download]
+
+            for future in as_completed(futures):
+                try:
+                    url, hashes = future.result()
+                    result[url] = hashes
+                except Exception:
+                    # 忽略单个资源的错误
+                    pass
+
         return result
-    except Exception:
-        return result
+
+    except requests.exceptions.Timeout:
+        raise NetworkError(f"请求超时: {page_url}")
+    except requests.exceptions.ConnectionError:
+        raise NetworkError(f"连接失败: {page_url}")
+    except requests.exceptions.RequestException as e:
+        raise NetworkError(f"请求失败: {page_url} - {e}")
+
+
+def get_comprehensive_fingerprint(url: str, timeout: float = None) -> Dict[str, any]:
+    """
+    获取目标的综合指纹信息
+
+    Args:
+        url: 目标URL
+        timeout: 请求超时时间（秒）
+
+    Returns:
+        包含所有指纹信息的字典:
+        {
+            'http_headers': {...},  # HTTP头指纹
+            'resources': {...},     # 静态资源指纹
+        }
+    """
+    if timeout is None:
+        timeout = Config.FINGERPRINT_TIMEOUT
+
+    fingerprint = {
+        'http_headers': {},
+        'resources': {},
+    }
+
+    try:
+        # 提取HTTP头指纹
+        fingerprint['http_headers'] = extract_http_headers_fingerprint(url, timeout)
+    except NetworkError:
+        pass
+
+    try:
+        # 提取资源指纹
+        fingerprint['resources'] = get_resources_fingerprint_from_page(
+            url,
+            timeout=timeout,
+            resource_types=['css', 'js'],
+            algorithms=['md5', 'sha1']
+        )
+    except NetworkError:
+        pass
+
+    return fingerprint
 
 
 __all__ = [
-    "calculate_file_md5_from_url",
+    "calculate_file_hash",
+    "calculate_file_hash_from_url",
     "get_file_md5",
     "get_file_md5_with_cve",
+    "extract_http_headers_fingerprint",
+    "extract_resources_from_html",
     "extract_css_links_from_html",
     "get_css_files_md5_from_page",
+    "get_resources_fingerprint_from_page",
+    "get_comprehensive_fingerprint",
+    "FingerprintError",
+    "NetworkError",
 ]

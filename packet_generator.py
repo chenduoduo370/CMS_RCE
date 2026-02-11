@@ -18,6 +18,13 @@ try:
 except ImportError:
     parse_http_packet = None  # type: ignore
 
+# 导入URL工具函数
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from src.core.url_utils import extract_path_from_url
+except ImportError:
+    extract_path_from_url = None  # type: ignore
+
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -61,14 +68,18 @@ def _write_payload_stub(parsed: Dict, cve_id: str, output_dir: Optional[str] = N
         body_raw = parsed.get("body", "")
 
         if path.startswith("http://") or path.startswith("https://"):
-            from urllib.parse import urlparse
-
-            parsed_url = urlparse(path)
-            path = parsed_url.path
-            if parsed_url.query:
-                path += "?" + parsed_url.query
-            if parsed_url.fragment:
-                path += "#" + parsed_url.fragment
+            # 使用统一的URL工具函数
+            if extract_path_from_url:
+                path = extract_path_from_url(path)
+            else:
+                # 回退到原始实现
+                from urllib.parse import urlparse
+                parsed_url = urlparse(path)
+                path = parsed_url.path
+                if parsed_url.query:
+                    path += "?" + parsed_url.query
+                if parsed_url.fragment:
+                    path += "#" + parsed_url.fragment
 
         if not path.startswith("/"):
             path = "/" + path
@@ -163,14 +174,18 @@ def generate_from_packet(
                     proto = parts[2] if len(parts) > 2 else proto
 
                     if path.startswith("http://") or path.startswith("https://"):
-                        from urllib.parse import urlparse
-
-                        parsed_url = urlparse(path)
-                        path = parsed_url.path
-                        if parsed_url.query:
-                            path += "?" + parsed_url.query
-                        if parsed_url.fragment:
-                            path += "#" + parsed_url.fragment
+                        # 使用统一的URL工具函数
+                        if extract_path_from_url:
+                            path = extract_path_from_url(path)
+                        else:
+                            # 回退到原始实现
+                            from urllib.parse import urlparse
+                            parsed_url = urlparse(path)
+                            path = parsed_url.path
+                            if parsed_url.query:
+                                path += "?" + parsed_url.query
+                            if parsed_url.fragment:
+                                path += "#" + parsed_url.fragment
 
                     if not path.startswith("/"):
                         path = "/" + path

@@ -1,0 +1,213 @@
+/* CVE Payload 工具 - GUI 样式表 */
+
+/* 主窗口背景 */
+QMainWindow {
+    background-image: url(assets/background.jpg);
+    background-position: center;
+    background-repeat: no-repeat;
+    background-attachment: fixed;
+}
+
+/* 标签页容器背景半透明，确保内容可读 */
+QTabWidget::pane {
+    background-color: rgba(255, 255, 255, 0.92);
+    border: 1px solid #cccccc;
+    border-radius: 5px;
+}
+
+QTabBar::tab {
+    background-color: rgba(230, 230, 230, 0.95);
+    color: #333333;
+    padding: 8px 16px;
+    margin-right: 2px;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+    font-weight: bold;
+}
+
+QTabBar::tab:selected {
+    background-color: rgba(255, 255, 255, 0.95);
+    color: #0066cc;
+}
+
+QTabBar::tab:hover {
+    background-color: rgba(240, 240, 240, 0.95);
+}
+
+/* 所有按钮统一样式 - 使用明显的蓝色，加粗边框增强可见性 */
+QPushButton {
+    background-color: #0078d4;
+    color: white;
+    border: 3px solid #003d6e;
+    border-radius: 6px;
+    padding: 10px 18px;
+    font-size: 14px;
+    font-weight: bold;
+    min-height: 32px;
+}
+
+QPushButton:hover {
+    background-color: #106ebe;
+    border: 3px solid #002a4d;
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #1a7fc7, stop:1 #0d5fa0);
+}
+
+QPushButton:pressed {
+    background-color: #004578;
+    border: 3px solid #001f3d;
+    padding: 11px 17px 9px 19px;
+}
+
+QPushButton:disabled {
+    background-color: #cccccc;
+    color: #666666;
+    border: 2px solid #999999;
+}
+
+/* 危险操作按钮（删除、清除等）使用红色 */
+QPushButton[text*="删除"],
+QPushButton[text*="清除"],
+QPushButton[text*="移除"] {
+    background-color: #d13438;
+    border: 3px solid #8b2327;
+}
+
+QPushButton[text*="删除"]:hover,
+QPushButton[text*="清除"]:hover,
+QPushButton[text*="移除"]:hover {
+    background-color: #b82e32;
+    border: 3px solid #6d1b1f;
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #e03d41, stop:1 #a72b2f);
+}
+
+QPushButton[text*="删除"]:pressed,
+QPushButton[text*="清除"]:pressed,
+QPushButton[text*="移除"]:pressed {
+    background-color: #8b2327;
+    border: 3px solid #5a1519;
+}
+
+/* 成功/确认操作按钮使用绿色 */
+QPushButton[text*="发送"],
+QPushButton[text*="执行"],
+QPushButton[text*="开始"],
+QPushButton[text*="启动"],
+QPushButton[text*="保存"] {
+    background-color: #107c10;
+    border: 3px solid #0a5a0a;
+}
+
+QPushButton[text*="发送"]:hover,
+QPushButton[text*="执行"]:hover,
+QPushButton[text*="开始"]:hover,
+QPushButton[text*="启动"]:hover,
+QPushButton[text*="保存"]:hover {
+    background-color: #0e6b0e;
+    border: 3px solid #084908;
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #138d13, stop:1 #0a5a0a);
+}
+
+QPushButton[text*="发送"]:pressed,
+QPushButton[text*="执行"]:pressed,
+QPushButton[text*="开始"]:pressed,
+QPushButton[text*="启动"]:pressed,
+QPushButton[text*="保存"]:pressed {
+    background-color: #0a5a0a;
+    border: 3px solid #063806;
+}
+
+/* 输入框和文本区域 */
+QLineEdit, QTextEdit, QPlainTextEdit {
+    background-color: rgba(255, 255, 255, 0.95);
+    border: 1px solid #cccccc;
+    border-radius: 3px;
+    padding: 5px;
+    color: #333333;
+}
+
+QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus {
+    border: 2px solid #0078d4;
+}
+
+/* 下拉框 */
+QComboBox {
+    background-color: rgba(255, 255, 255, 0.95);
+    border: 1px solid #cccccc;
+    border-radius: 3px;
+    padding: 5px;
+    color: #333333;
+}
+
+QComboBox:hover {
+    border: 1px solid #0078d4;
+}
+
+QComboBox::drop-down {
+    border: none;
+    width: 20px;
+}
+
+/* 列表和表格 */
+QListWidget, QTableWidget {
+    background-color: rgba(255, 255, 255, 0.95);
+    border: 1px solid #cccccc;
+    border-radius: 3px;
+    color: #333333;
+}
+
+/* 分组框 */
+QGroupBox {
+    background-color: rgba(255, 255, 255, 0.85);
+    border: 2px solid #cccccc;
+    border-radius: 5px;
+    margin-top: 10px;
+    padding-top: 10px;
+    font-weight: bold;
+    color: #333333;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    padding: 0 5px;
+    color: #0066cc;
+}
+
+/* 标签 */
+QLabel {
+    color: #333333;
+    background-color: transparent;
+}
+
+/* 滚动条 */
+QScrollBar:vertical {
+    background-color: rgba(240, 240, 240, 0.8);
+    width: 12px;
+    border-radius: 6px;
+}
+
+QScrollBar::handle:vertical {
+    background-color: rgba(150, 150, 150, 0.8);
+    border-radius: 6px;
+    min-height: 20px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background-color: rgba(120, 120, 120, 0.9);
+}
+
+QScrollBar:horizontal {
+    background-color: rgba(240, 240, 240, 0.8);
+    height: 12px;
+    border-radius: 6px;
+}
+
+QScrollBar::handle:horizontal {
+    background-color: rgba(150, 150, 150, 0.8);
+    border-radius: 6px;
+    min-width: 20px;
+}
+
+QScrollBar::handle:horizontal:hover {
+    background-color: rgba(120, 120, 120, 0.9);
+}

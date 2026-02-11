@@ -23,7 +23,7 @@ try:
                                  QTableWidgetItem, QHeaderView, QDialog, QDialogButtonBox,
                                  QInputDialog, QMenu)
     from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
-    from PyQt5.QtGui import QFont, QTextCursor
+    from PyQt5.QtGui import QFont, QTextCursor, QPixmap, QPalette, QBrush
     PYQT5_AVAILABLE = True
 except ImportError:
     PYQT5_AVAILABLE = False
@@ -42,11 +42,18 @@ except ImportError:
     format_scan_result = None
 
 try:
-    # CSS MD5计算功能
-    from fingerprint import get_file_md5, get_css_files_md5_from_page
+    # 指纹识别功能（支持多种资源类型）
+    from fingerprint import (
+        get_file_md5,
+        get_css_files_md5_from_page,  # 向后兼容
+        get_resources_fingerprint_from_page,  # 新的多资源指纹识别
+        extract_http_headers_fingerprint  # HTTP头指纹识别
+    )
 except ImportError:
     get_file_md5 = None
     get_css_files_md5_from_page = None
+    get_resources_fingerprint_from_page = None
+    extract_http_headers_fingerprint = None
 
 try:
     # 指纹-CVE映射管理
@@ -220,23 +227,34 @@ class GenerateWorker(QThread):
 
 
 class CSSMD5Worker(QThread):
-    """CSS MD5计算工作线程"""
+    """资源指纹识别工作线程（支持CSS、JS等多种资源类型）"""
     finished = pyqtSignal(dict)
     error = pyqtSignal(str)
-    
-    def __init__(self, page_url, timeout):
+
+    def __init__(self, page_url, timeout, resource_types=None):
         super().__init__()
         self.page_url = page_url
         self.timeout = timeout
-    
+        self.resource_types = resource_types or ['css', 'js']  # 默认识别CSS和JS
+
     def run(self):
         try:
-            if get_css_files_md5_from_page is None:
-                self.error.emit("CSS MD5功能未加载")
-                return
-            
-            result = get_css_files_md5_from_page(self.page_url, self.timeout)
-            self.finished.emit(result)
+            if get_resources_fingerprint_from_page is None:
+                # 降级到旧的CSS-only功能
+                if get_css_files_md5_from_page is None:
+                    self.error.emit("指纹识别功能未加载")
+                    return
+                result = get_css_files_md5_from_page(self.page_url, self.timeout)
+                self.finished.emit(result)
+            else:
+                # 使用新的多资源指纹识别功能
+                result = get_resources_fingerprint_from_page(
+                    self.page_url,
+                    timeout=self.timeout,
+                    resource_types=self.resource_types,
+                    algorithms=['md5', 'sha1']
+                )
+                self.finished.emit(result)
         except Exception as e:
             self.error.emit(str(e))
 
@@ -314,7 +332,7 @@ class AutoTestWorker(QThread):
                 open_ports = ports_to_scan
 
             # 对每个开放端口做指纹识别，收集匹配到的 CVE（按端口映射）
-            if get_css_files_md5_from_page is None:
+            if get_css_files_md5_from_page is None and get_resources_fingerprint_from_page is None:
                 self.error.emit("指纹模块未加载")
                 return
 
@@ -323,20 +341,48 @@ class AutoTestWorker(QThread):
                 try:
                     url_for_fp = f"http://{base_host}:{port}/"
                     self.log_signal.emit(f"    [*] 对 {url_for_fp} 进行指纹识别...")
-                    css_md5_dict = get_css_files_md5_from_page(url_for_fp, self.fp_timeout)
-                    if not css_md5_dict:
-                        self.log_signal.emit(f"    [-] {url_for_fp} 未提取到 CSS 或访问失败")
-                        continue
 
-                    for css_url, info in css_md5_dict.items():
-                        if isinstance(info, tuple):
-                            md5_hash, cve_id = info
-                        else:
-                            md5_hash, cve_id = info, None
-                        if md5_hash:
-                            self.log_signal.emit(f"        [+] {css_url} MD5: {md5_hash} {'CVE: '+cve_id if cve_id else ''}")
-                            if cve_id:
-                                matched_cves_per_port.setdefault(cve_id, set()).add(port)
+                    # 使用新的多资源指纹识别功能（如果可用）
+                    if get_resources_fingerprint_from_page is not None:
+                        resource_dict = get_resources_fingerprint_from_page(
+                            url_for_fp,
+                            timeout=self.fp_timeout,
+                            resource_types=['css', 'js'],
+                            algorithms=['md5']
+                        )
+                        if not resource_dict:
+                            self.log_signal.emit(f"    [-] {url_for_fp} 未提取到静态资源或访问失败")
+                            continue
+
+                        for res_url, info in resource_dict.items():
+                            if isinstance(info, dict):
+                                md5_hash = info.get('md5')
+                                cve_id = info.get('cve')
+                            else:
+                                md5_hash, cve_id = info, None
+
+                            if md5_hash:
+                                res_type = 'CSS' if '.css' in res_url.lower() else 'JS' if '.js' in res_url.lower() else 'Other'
+                                self.log_signal.emit(f"        [+] {res_type}: {res_url}")
+                                self.log_signal.emit(f"            MD5: {md5_hash} {'CVE: '+cve_id if cve_id else ''}")
+                                if cve_id:
+                                    matched_cves_per_port.setdefault(cve_id, set()).add(port)
+                    else:
+                        # 降级到旧的CSS-only功能
+                        css_md5_dict = get_css_files_md5_from_page(url_for_fp, self.fp_timeout)
+                        if not css_md5_dict:
+                            self.log_signal.emit(f"    [-] {url_for_fp} 未提取到 CSS 或访问失败")
+                            continue
+
+                        for css_url, info in css_md5_dict.items():
+                            if isinstance(info, tuple):
+                                md5_hash, cve_id = info
+                            else:
+                                md5_hash, cve_id = info, None
+                            if md5_hash:
+                                self.log_signal.emit(f"        [+] {css_url} MD5: {md5_hash} {'CVE: '+cve_id if cve_id else ''}")
+                                if cve_id:
+                                    matched_cves_per_port.setdefault(cve_id, set()).add(port)
                 except Exception as e:
                     self.log_signal.emit(f"    [!] 指纹识别出错 ({base_host}:{port}): {e}")
 
@@ -492,6 +538,34 @@ class MainWindow(QMainWindow):
         """初始化界面"""
         self.setWindowTitle("CVE Payload 工具 - GUI")
         self.setGeometry(100, 100, 1200, 800)
+
+        # 设置背景图片（使用QPalette，比QSS更可靠）
+        bg_image_path = os.path.join(current_dir, "assets", "background.jpg")
+        if os.path.exists(bg_image_path):
+            try:
+                pixmap = QPixmap(bg_image_path)
+                if not pixmap.isNull():
+                    # 缩放图片以适应窗口，保持宽高比
+                    scaled_pixmap = pixmap.scaled(self.size(), Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+                    palette = QPalette()
+                    palette.setBrush(QPalette.Window, QBrush(scaled_pixmap))
+                    self.setPalette(palette)
+                    self.setAutoFillBackground(True)
+                else:
+                    print(f"[!] Failed to load background image: {bg_image_path}", file=sys.stderr)
+            except Exception as e:
+                print(f"[!] Error setting background image: {e}", file=sys.stderr)
+
+        # 加载样式表
+        style_path = os.path.join(current_dir, "assets", "style.qss")
+        if os.path.exists(style_path):
+            try:
+                with open(style_path, "r", encoding="utf-8") as f:
+                    stylesheet = f.read()
+                    self.setStyleSheet(stylesheet)
+            except Exception as e:
+                print(f"[!] 加载样式表失败: {e}", file=sys.stderr)
+                print(f"[!] 加载样式表失败: {e}", file=sys.stderr)
         
         # 创建顶层标签页：仅保留“自动化测试”为顶层可见项，
         # 其余功能放入“高级功能”二级标签内
@@ -535,7 +609,7 @@ class MainWindow(QMainWindow):
 
         try:
             css_md5_tab = self.create_css_md5_tab()
-            inner_tabs.addTab(css_md5_tab, "CSS MD5 计算")
+            inner_tabs.addTab(css_md5_tab, "资源指纹识别")
         except Exception:
             pass
 
@@ -988,7 +1062,7 @@ class MainWindow(QMainWindow):
         self.worker.start()
 
     def create_css_md5_tab(self):
-        """创建 CSS MD5 计算标签页"""
+        """创建资源指纹识别标签页"""
         widget = QWidget()
         layout = QVBoxLayout()
         
@@ -1013,7 +1087,7 @@ class MainWindow(QMainWindow):
         # 按钮区域（包装在小边框中）
         button_layout = QHBoxLayout()
         
-        self.css_calculate_btn = QPushButton("计算 CSS MD5")
+        self.css_calculate_btn = QPushButton("计算资源指纹")
         self.css_calculate_btn.setObjectName("primary")
         self.css_calculate_btn.clicked.connect(self.calculate_css_md5)
         button_layout.addWidget(self.css_calculate_btn)
@@ -1041,7 +1115,7 @@ class MainWindow(QMainWindow):
         return widget
     
     def calculate_css_md5(self):
-        """计算CSS文件的MD5值"""
+        """计算静态资源的指纹（CSS、JS等）"""
         page_url = self.css_page_url_input.text().strip()
         timeout = self.css_timeout_spin.value()
 
@@ -1049,76 +1123,137 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "警告", "请输入页面 URL")
             return
 
-        if get_css_files_md5_from_page is None:
-            QMessageBox.warning(self, "警告", "CSS MD5功能未加载")
+        if get_css_files_md5_from_page is None and get_resources_fingerprint_from_page is None:
+            QMessageBox.warning(self, "警告", "指纹识别功能未加载")
             return
-        
+
         # 禁用按钮
         self.css_calculate_btn.setEnabled(False)
         self.css_calculate_btn.setText("计算中...")
         self.css_result_text.clear()
-        self.css_result_text.append("正在访问页面并提取CSS文件...\n")
-        
-        # 创建工作线程
-        self.css_worker = CSSMD5Worker(page_url, timeout)
+        self.css_result_text.append("正在访问页面并提取静态资源（CSS、JS等）...\n")
+
+        # 创建工作线程，支持CSS和JS
+        self.css_worker = CSSMD5Worker(page_url, timeout, resource_types=['css', 'js'])
         self.css_worker.finished.connect(self.on_css_md5_finished)
         self.css_worker.error.connect(self.on_css_md5_error)
         self.css_worker.start()
     
-    def on_css_md5_finished(self, css_md5_dict):
-        """CSS MD5计算完成回调，并匹配CVE（精简回显格式）"""
+    def on_css_md5_finished(self, resource_dict):
+        """资源指纹识别完成回调，支持多种资源类型和哈希算法"""
         self.css_calculate_btn.setEnabled(True)
-        self.css_calculate_btn.setText("计算 CSS MD5")
-        
-        if not css_md5_dict:
-            self.css_result_text.append("[!] 未找到CSS文件或访问页面失败")
-            QMessageBox.warning(self, "警告", "未找到CSS文件或访问页面失败")
+        self.css_calculate_btn.setText("计算资源指纹")
+
+        if not resource_dict:
+            self.css_result_text.append("[!] 未找到静态资源或访问页面失败")
+            QMessageBox.warning(self, "警告", "未找到静态资源或访问页面失败")
             return
-        
+
         self.css_result_text.clear()
         self.css_result_text.append("=" * 60)
-        self.css_result_text.append("CSS 文件 MD5 计算结果")
+        self.css_result_text.append("静态资源指纹识别结果")
         self.css_result_text.append("=" * 60)
-        self.css_result_text.append(f"找到 {len(css_md5_dict)} 个CSS文件")
-        
+
+        # 按资源类型分组统计
+        resource_types = {}
+        for url, info in resource_dict.items():
+            # 判断资源类型
+            if '.css' in url.lower():
+                res_type = 'CSS'
+            elif '.js' in url.lower():
+                res_type = 'JavaScript'
+            elif any(ext in url.lower() for ext in ['.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico']):
+                res_type = 'Image'
+            elif any(ext in url.lower() for ext in ['.woff', '.woff2', '.ttf', '.eot', '.otf']):
+                res_type = 'Font'
+            else:
+                res_type = 'Other'
+
+            if res_type not in resource_types:
+                resource_types[res_type] = []
+            resource_types[res_type].append((url, info))
+
+        # 显示统计信息
+        total_count = len(resource_dict)
+        self.css_result_text.append(f"找到 {total_count} 个静态资源")
+        for res_type, items in resource_types.items():
+            self.css_result_text.append(f"  - {res_type}: {len(items)} 个")
+
         success_count = 0
         matched_cve = 0
         matched_cve_set = set()
-        for css_url, info in css_md5_dict.items():
-            if isinstance(info, tuple):
-                md5_hash, cve_id = info
-            else:
-                md5_hash, cve_id = info, None
-            
-            self.css_result_text.append("-" * 60)
-            self.css_result_text.append(f"URL : {css_url}")
-            if md5_hash:
-                self.css_result_text.append(f"MD5 : {md5_hash}")
-                if cve_id:
-                    self.css_result_text.append(f"CVE : {cve_id}")
-                    matched_cve += 1
-                    matched_cve_set.add(cve_id)
-                else:
-                    self.css_result_text.append("CVE : (未匹配)")
-                success_count += 1
-            else:
-                self.css_result_text.append("MD5 : (下载失败)")
-                self.css_result_text.append("CVE : -")
-        
+
+        # 按资源类型显示详细信息
+        for res_type in sorted(resource_types.keys()):
+            items = resource_types[res_type]
+            self.css_result_text.append("")
+            self.css_result_text.append("=" * 60)
+            self.css_result_text.append(f"{res_type} 资源 ({len(items)} 个)")
+            self.css_result_text.append("=" * 60)
+
+            for url, info in items:
+                self.css_result_text.append("-" * 60)
+                self.css_result_text.append(f"URL : {url}")
+
+                # 处理旧格式（tuple）和新格式（dict）
+                if isinstance(info, tuple):
+                    # 旧格式：(md5_hash, cve_id)
+                    md5_hash, cve_id = info
+                    if md5_hash:
+                        self.css_result_text.append(f"MD5 : {md5_hash}")
+                        if cve_id:
+                            self.css_result_text.append(f"CVE : {cve_id}")
+                            matched_cve += 1
+                            matched_cve_set.add(cve_id)
+                        else:
+                            self.css_result_text.append("CVE : (未匹配)")
+                        success_count += 1
+                    else:
+                        self.css_result_text.append("MD5 : (下载失败)")
+                        self.css_result_text.append("CVE : -")
+                elif isinstance(info, dict):
+                    # 新格式：{'md5': ..., 'sha1': ..., 'cve': ...}
+                    has_hash = False
+
+                    # 显示所有哈希值
+                    if 'md5' in info and info['md5']:
+                        self.css_result_text.append(f"MD5    : {info['md5']}")
+                        has_hash = True
+                    if 'sha1' in info and info['sha1']:
+                        self.css_result_text.append(f"SHA1   : {info['sha1']}")
+                        has_hash = True
+                    if 'sha256' in info and info['sha256']:
+                        self.css_result_text.append(f"SHA256 : {info['sha256']}")
+                        has_hash = True
+
+                    if has_hash:
+                        # 显示CVE信息
+                        cve_id = info.get('cve')
+                        if cve_id:
+                            self.css_result_text.append(f"CVE    : {cve_id}")
+                            matched_cve += 1
+                            matched_cve_set.add(cve_id)
+                        else:
+                            self.css_result_text.append("CVE    : (未匹配)")
+                        success_count += 1
+                    else:
+                        self.css_result_text.append("哈希   : (下载失败)")
+                        self.css_result_text.append("CVE    : -")
+
         self.css_result_text.append("=" * 60)
-        self.css_result_text.append(f"成功: {success_count}/{len(css_md5_dict)}")
+        self.css_result_text.append(f"成功: {success_count}/{total_count}")
         if matched_cve_set:
             self.css_result_text.append(f"匹配到的 CVE 列表: {', '.join(sorted(matched_cve_set))}")
-        
+
         if success_count > 0:
-            QMessageBox.information(self, "成功", f"成功计算 {success_count} 个CSS文件的MD5值，匹配到 {matched_cve} 个CVE")
+            QMessageBox.information(self, "成功", f"成功识别 {success_count} 个资源的指纹，匹配到 {matched_cve} 个CVE")
         else:
-            QMessageBox.warning(self, "警告", "所有CSS文件下载失败")
+            QMessageBox.warning(self, "警告", "所有资源下载失败")
     
     def on_css_md5_error(self, error_msg):
-        """CSS MD5计算错误回调"""
+        """资源指纹识别错误回调"""
         self.css_calculate_btn.setEnabled(True)
-        self.css_calculate_btn.setText("计算 CSS MD5")
+        self.css_calculate_btn.setText("计算资源指纹")
         self.css_result_text.append(f"[!] 错误: {error_msg}")
         QMessageBox.critical(self, "错误", f"计算失败: {error_msg}")
     
