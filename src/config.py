@@ -52,6 +52,25 @@ class Config:
     # 日志格式
     LOG_FORMAT = "[%(levelname)s] %(message)s"
 
+    # ==================== LLM配置 ====================
+    # LLM API密钥（优先从环境变量读取）
+    LLM_API_KEY = os.getenv('LLM_API_KEY', '')
+
+    # LLM API基础URL（支持自定义端点）
+    LLM_API_BASE = os.getenv('LLM_API_BASE', 'https://api.openai.com/v1')
+
+    # LLM模型名称
+    LLM_MODEL = os.getenv('LLM_MODEL', 'gpt-4')
+
+    # LLM请求超时时间（秒）
+    LLM_TIMEOUT = 30
+
+    # LLM最大重试次数
+    LLM_MAX_RETRIES = 3
+
+    # 是否启用AI验证（可通过环境变量关闭）
+    ENABLE_AI_VERIFICATION = os.getenv('ENABLE_AI_VERIFICATION', 'true').lower() == 'true'
+
     @classmethod
     def get_payloads_path(cls) -> Path:
         """获取Payload目录的绝对路径"""
@@ -61,3 +80,8 @@ class Config:
     def get_mapping_file_path(cls) -> Path:
         """获取指纹映射文件的绝对路径"""
         return cls.PROJECT_ROOT / cls.FINGERPRINT_MAPPING_FILE
+
+    @classmethod
+    def is_llm_configured(cls) -> bool:
+        """检查LLM是否已配置"""
+        return bool(cls.LLM_API_KEY)

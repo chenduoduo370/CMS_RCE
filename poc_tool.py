@@ -168,7 +168,7 @@ def main():
     parser_port.add_argument('--ports', help='指定端口列表，逗号分隔（如: 80,443,8080）')
     parser_port.add_argument('--range', dest='port_range', help='端口范围（如: 1-1000）')
     parser_port.add_argument('--timeout', type=float, default=2.0, help='每个端口超时时间（秒，默认2.0）')
-    
+
     args = parser.parse_args()
     
     if not args.command:
@@ -514,21 +514,21 @@ def main():
         print(f"成功执行: {success_count}/{len(matched_cves)}", flush=True)
         print(f"{'='*60}", flush=True)
         sys.exit(0 if success_count > 0 else 1)
-    
+
     elif args.command == 'portscan':
         if scan_ports is None:
             print("[!] 端口扫描模块未加载", file=sys.stderr, flush=True)
             sys.exit(1)
-        
+
         host = args.host
         timeout = args.timeout
-        
+
         print(f"\n{'='*60}", flush=True)
         print("端口扫描", flush=True)
         print(f"{'='*60}", flush=True)
         print(f"目标主机: {host}", flush=True)
         print(f"{'='*60}\n", flush=True)
-        
+
         # 确定要扫描的端口
         if args.ports:
             # 指定端口列表
@@ -551,12 +551,12 @@ def main():
             # 默认扫描常见端口
             ports = list(COMMON_PORTS.keys())
             print(f"[*] 扫描常见端口 ({len(ports)} 个端口)", flush=True)
-        
+
         print(f"[*] 开始扫描...\n", flush=True)
-        
+
         results = scan_ports(host, ports, timeout)
         print(format_scan_result(results), flush=True)
-        
+
         open_count = sum(1 for _, (is_open, _) in results.items() if is_open)
         print(f"\n{'='*60}", flush=True)
         sys.exit(0 if open_count > 0 else 1)

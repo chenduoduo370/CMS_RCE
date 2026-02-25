@@ -30,6 +30,22 @@ class PayloadManager:
         self.debug = debug
         self.current_dir = current_dir
 
+    def _normalize_ip_port(self, ip_port: str) -> str:
+        """
+        规范化 ip_port 参数，去掉协议部分
+
+        Args:
+            ip_port: 可能包含协议的地址，如 "http://192.168.1.1:80" 或 "192.168.1.1:80"
+
+        Returns:
+            不包含协议的地址，如 "192.168.1.1:80"
+        """
+        if ip_port.startswith("http://"):
+            return ip_port[7:]  # 去掉 "http://"
+        elif ip_port.startswith("https://"):
+            return ip_port[8:]  # 去掉 "https://"
+        return ip_port
+
     def _normalize_url(self, url: str, ip_port: str, headers: dict) -> str:
         """
         确保URL可直接请求。如果模块只提供了路径，自动补全协议和Host。
@@ -93,11 +109,16 @@ class PayloadManager:
     def generate_payload(self, module_name: str, ip_port: str, cmd: str) -> Optional[dict]:
         """生成payload数据（不发送）"""
         try:
+            # 规范化 ip_port，去掉可能存在的协议前缀
+            normalized_ip_port = self._normalize_ip_port(ip_port)
+
             if self.debug:
-                print(f"[DEBUG] 调用 module.build('{ip_port}', '{cmd}')")
+                print(f"[DEBUG] 原始 ip_port: {ip_port}")
+                print(f"[DEBUG] 规范化后 ip_port: {normalized_ip_port}")
+                print(f"[DEBUG] 调用 module.build('{normalized_ip_port}', '{cmd}')")
 
             module = self.load_payload_module(module_name)
-            payload_data = module.build(ip_port, cmd)
+            payload_data = module.build(normalized_ip_port, cmd)
 
             if self.debug:
                 print(f"[DEBUG] build() 返回类型: {type(payload_data)}")
@@ -276,14 +297,14 @@ class PayloadManager:
 
     def send_payload_safe(self, module_name: str, ip_port: str, cmd: str, timeout: int = 10, log_callback=None):
         """发送payload到目标（安全版本，不会调用sys.exit，适用于自动化测试）
-        
+
         Args:
             module_name: 模块名
             ip_port: 目标地址
             cmd: 执行命令
             timeout: 超时时间
             log_callback: 日志回调函数，用于GUI显示日志
-        
+
         Returns:
             response对象，如果失败返回None
         """
@@ -291,14 +312,17 @@ class PayloadManager:
             print(msg, flush=True)
             if log_callback:
                 log_callback(msg)
-        
+
         try:
+            # 规范化 ip_port，去掉可能存在的协议前缀
+            normalized_ip_port = self._normalize_ip_port(ip_port)
+
             log(f"[*] 加载模块: {module_name}")
             module = self.load_payload_module(module_name, raise_on_error=True)
             log(f"[+] 模块加载成功")
-            
+
             log(f"[*] 生成 Payload...")
-            payload_data = module.build(ip_port, cmd)
+            payload_data = module.build(normalized_ip_port, cmd)
             
             if not isinstance(payload_data, dict):
                 log(f"[!] 错误: build() 方法返回的不是字典类型")

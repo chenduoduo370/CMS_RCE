@@ -813,7 +813,7 @@ class MainWindow(QMainWindow):
         
         widget.setLayout(layout)
         return widget
-    
+
     def create_list_tab(self):
         """创建 Payload 列表标签页"""
         widget = QWidget()
@@ -1006,7 +1006,14 @@ class MainWindow(QMainWindow):
                 self.result_text.append("=" * 60)
                 if req is not None:
                     try:
-                        self.result_text.append(f"{req.method} {req.url}")
+                        # 解析URL，提取路径和查询字符串
+                        from urllib.parse import urlparse
+                        parsed = urlparse(req.url)
+                        path_with_query = parsed.path
+                        if parsed.query:
+                            path_with_query += f"?{parsed.query}"
+                        # 显示标准HTTP格式
+                        self.result_text.append(f"{req.method} {path_with_query} HTTP/1.1")
                         for k, v in req.headers.items():
                             self.result_text.append(f"{k}: {v}")
                         if getattr(req, "body", None):
