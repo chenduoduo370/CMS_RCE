@@ -269,6 +269,45 @@ class ResourceExtractor(HTMLParser):
                 self.img_links.add(absolute_url)
 
 
+def extract_resources_from_css(css_content: str, base_url: str) -> Dict[str, List[str]]:
+    """
+    从CSS内容中提取资源链接（字体、图片等）
+
+    Args:
+        css_content: CSS文件内容
+        base_url: CSS文件的URL（用于解析相对路径）
+
+    Returns:
+        资源字典，包含 img, font 等类型
+    """
+    img_links: Set[str] = set()
+    font_links: Set[str] = set()
+
+    # 提取所有url()引用
+    url_pattern = r'url\(["\']?([^"\'()]+)["\']?\)'
+    url_matches = re.findall(url_pattern, css_content, re.IGNORECASE)
+
+    for url in url_matches:
+        url = url.strip()
+        # 跳过data URI
+        if url.startswith('data:'):
+            continue
+
+        absolute_url = urljoin(base_url, url)
+
+        # 根据扩展名分类
+        lower_url = url.lower()
+        if any(ext in lower_url for ext in ['.woff', '.woff2', '.ttf', '.eot', '.otf']):
+            font_links.add(absolute_url)
+        elif any(ext in lower_url for ext in ['.jpg', '.jpeg', '.png', '.gif', '.svg', '.webp', '.bmp', '.ico']):
+            img_links.add(absolute_url)
+
+    return {
+        'img': list(img_links),
+        'font': list(font_links),
+    }
+
+
 def extract_resources_from_html(html_content: str, base_url: str) -> Dict[str, List[str]]:
     """
     从HTML内容中提取所有静态资源链接
@@ -290,12 +329,10 @@ def extract_resources_from_html(html_content: str, base_url: str) -> Dict[str, L
         absolute_url = urljoin(base_url, match)
         parser.css_links.add(absolute_url)
 
-    # 检查字体文件（通常在CSS中引用，但也可能在HTML中）
-    font_pattern = r'url\(["\']?([^"\']+\.(?:woff2?|ttf|eot|otf))["\']?\)'
-    font_matches = re.findall(font_pattern, html_content, re.IGNORECASE)
-    for match in font_matches:
-        absolute_url = urljoin(base_url, match)
-        parser.font_links.add(absolute_url)
+    # 检查内联样式中的资源
+    inline_resources = extract_resources_from_css(html_content, base_url)
+    parser.img_links.update(inline_resources.get('img', []))
+    parser.font_links.update(inline_resources.get('font', []))
 
     return {
         'css': list(parser.css_links),
@@ -408,11 +445,38 @@ def get_resources_fingerprint_from_page(
         html_content = response.text
         resources = extract_resources_from_html(html_content, page_url)
 
-        # 收集需要下载的资源URL
+        # 如果需要提取img或font，先下载CSS文件并解析
+        if ('img' in resource_types or 'font' in resource_types) and 'css' in resources:
+            for css_url in resources['css']:
+                try:
+                    css_resp = requests.get(
+                        css_url,
+                        timeout=timeout,
+                        verify=Config.VERIFY_SSL,
+                        headers=headers
+                    )
+                    if css_resp.status_code == 200:
+                        css_content = css_resp.text
+                        css_resources = extract_resources_from_css(css_content, css_url)
+
+                        # 合并CSS中提取的资源
+                        if 'img' in resource_types and 'img' in css_resources:
+                            resources.setdefault('img', []).extend(css_resources['img'])
+                        if 'font' in resource_types and 'font' in css_resources:
+                            resources.setdefault('font', []).extend(css_resources['font'])
+                except Exception:
+                    # 忽略单个CSS文件的解析错误
+                    pass
+
+        # 收集需要下载的资源URL（去重）
         urls_to_download = []
+        seen_urls = set()
         for res_type in resource_types:
             if res_type in resources:
-                urls_to_download.extend(resources[res_type])
+                for url in resources[res_type]:
+                    if url not in seen_urls:
+                        urls_to_download.append(url)
+                        seen_urls.add(url)
 
         if not urls_to_download:
             return result

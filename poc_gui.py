@@ -647,7 +647,7 @@ class MainWindow(QMainWindow):
         
         # Payload 模块选择
         self.module_combo = QComboBox()
-        self.module_combo.setEditable(True)
+        self.module_combo.setEditable(False)  # 只允许从列表中选择，不允许手动输入
         self.module_combo.setMinimumWidth(300)
         self.refresh_payload_list()
         input_layout.addRow("Payload 模块:", self.module_combo)

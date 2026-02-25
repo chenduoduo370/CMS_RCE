@@ -27,10 +27,11 @@ from payload_sender import PayloadManager, list_payloads
 from packet_generator import generate_from_packet, read_packet_file
 
 try:
-    from fingerprint import get_file_md5, get_css_files_md5_from_page
+    from fingerprint import get_file_md5, get_css_files_md5_from_page, get_resources_fingerprint_from_page
 except ImportError:
     get_file_md5 = None
     get_css_files_md5_from_page = None
+    get_resources_fingerprint_from_page = None
 
 try:
     from fingerprint_cve_mapping import get_manager
@@ -381,73 +382,117 @@ def main():
                 sys.exit(1)
     
     elif args.command == 'auto':
-        if get_css_files_md5_from_page is None:
+        if get_resources_fingerprint_from_page is None:
             print("[!] 指纹模块未加载，无法执行 auto 命令", file=sys.stderr, flush=True)
             sys.exit(1)
-        
+
         url = args.url
         cmd = args.cmd
         timeout = args.timeout
         send_timeout = args.send_timeout
         debug = args.debug
-        
+
         print(f"\n{'='*60}", flush=True)
         print("自动化测试", flush=True)
         print(f"{'='*60}", flush=True)
         print(f"目标 URL: {url}", flush=True)
         print(f"执行命令: {cmd}", flush=True)
         print(f"{'='*60}\n", flush=True)
-        
-        # 步骤1：指纹识别
-        print("[*] 步骤1: 指纹识别（提取CSS文件并计算MD5）...", flush=True)
-        css_md5_dict = get_css_files_md5_from_page(url, timeout)
-        
-        if not css_md5_dict:
-            print("[!] 未找到CSS文件或访问页面失败", file=sys.stderr, flush=True)
+
+        # 步骤1：多资源指纹识别
+        print("[*] 步骤1: 多资源指纹识别（CSS、JS、图片、字体）...", flush=True)
+        if debug:
+            print("[DEBUG] 正在提取资源类型: CSS, JavaScript, 图片, 字体", flush=True)
+        resources_dict = get_resources_fingerprint_from_page(
+            url,
+            timeout=timeout,
+            resource_types=['css', 'js', 'img', 'font'],
+            algorithms=['md5', 'sha1']
+        )
+        if debug:
+            print(f"[DEBUG] 提取到的资源总数: {len(resources_dict)}", flush=True)
+            for res_url in list(resources_dict.keys())[:5]:  # 只显示前5个
+                print(f"[DEBUG]   - {res_url}", flush=True)
+
+        if not resources_dict:
+            print("[!] 未找到静态资源或访问页面失败", file=sys.stderr, flush=True)
             sys.exit(1)
-        
+
+        # 按资源类型分组显示
+        resource_types_found = {}
+        for resource_url in resources_dict.keys():
+            if '.css' in resource_url.lower():
+                resource_types_found.setdefault('CSS', []).append(resource_url)
+            elif '.js' in resource_url.lower():
+                resource_types_found.setdefault('JavaScript', []).append(resource_url)
+            elif any(ext in resource_url.lower() for ext in ['.jpg', '.jpeg', '.png', '.gif', '.svg', '.webp']):
+                resource_types_found.setdefault('图片', []).append(resource_url)
+            elif any(ext in resource_url.lower() for ext in ['.woff', '.woff2', '.ttf', '.eot', '.otf']):
+                resource_types_found.setdefault('字体', []).append(resource_url)
+
+        print(f"\n{'='*60}", flush=True)
+        print("静态资源指纹识别结果", flush=True)
+        print(f"{'='*60}", flush=True)
+        print(f"找到 {len(resources_dict)} 个静态资源", flush=True)
+        for res_type, urls in resource_types_found.items():
+            print(f"  - {res_type}: {len(urls)} 个", flush=True)
+
         # 收集匹配到的CVE
         matched_cves = set()
-        for css_url, info in css_md5_dict.items():
-            if isinstance(info, tuple):
-                md5_hash, cve_id = info
-            else:
-                md5_hash, cve_id = info, None
-            
-            if md5_hash:
-                print(f"    [+] {css_url}", flush=True)
-                print(f"        MD5: {md5_hash}", flush=True)
-                if cve_id:
-                    print(f"        CVE: {cve_id}", flush=True)
-                    matched_cves.add(cve_id)
-        
+        for res_type, urls in resource_types_found.items():
+            if urls:
+                print(f"\n{'='*60}", flush=True)
+                print(f"{res_type} 资源 ({len(urls)} 个)", flush=True)
+                print(f"{'='*60}", flush=True)
+
+                for resource_url in urls:
+                    hashes = resources_dict.get(resource_url, {})
+                    md5_hash = hashes.get('md5')
+                    sha1_hash = hashes.get('sha1')
+                    cve_id = hashes.get('cve')
+
+                    print(f"{'-'*60}", flush=True)
+                    print(f"URL : {resource_url}", flush=True)
+                    if md5_hash:
+                        print(f"MD5    : {md5_hash}", flush=True)
+                    if sha1_hash:
+                        print(f"SHA1   : {sha1_hash}", flush=True)
+                    if cve_id:
+                        print(f"CVE    : {cve_id}", flush=True)
+                        matched_cves.add(cve_id)
+
+        print(f"{'='*60}", flush=True)
+        success_count = sum(1 for hashes in resources_dict.values() if hashes.get('md5'))
+        print(f"成功: {success_count}/{len(resources_dict)}", flush=True)
+
         if not matched_cves:
             print("\n[!] 未匹配到任何CVE，无法执行自动化测试", file=sys.stderr, flush=True)
             sys.exit(1)
+
+        print(f"匹配到的 CVE 列表: {', '.join(sorted(matched_cves))}", flush=True)
         
-        print(f"\n[+] 匹配到的CVE: {', '.join(sorted(matched_cves))}", flush=True)
-        
+
         # 步骤2：执行Payload
         print(f"\n[*] 步骤2: 执行Payload...", flush=True)
-        
+
         # 从URL中提取ip:port
         from urllib.parse import urlparse
         parsed = urlparse(url)
         host = parsed.hostname or ''
         port = parsed.port or (443 if parsed.scheme == 'https' else 80)
         ip_port = f"{host}:{port}"
-        
+
         payload_manager = PayloadManager(debug=debug)
         success_count = 0
-        
+
         for cve_id in sorted(matched_cves):
             # 将CVE-XXXX-XXXX转换为模块名CVE_XXXX_XXXX
             module_name = cve_id.replace('-', '_')
-            
+
             print(f"\n{'='*60}", flush=True)
             print(f"[*] 尝试执行 Payload: {module_name}", flush=True)
             print(f"{'='*60}", flush=True)
-            
+
             try:
                 result = payload_manager.send_payload_safe(module_name, ip_port, cmd, timeout=send_timeout)
                 # 使用 is not None 判断，因为 response 对象在状态码非2xx时 bool 值可能为 False
@@ -463,7 +508,7 @@ def main():
                     print(f"[-] {module_name} 执行失败（无响应）", flush=True)
             except Exception as e:
                 print(f"[-] {module_name} 执行出错: {e}", flush=True)
-        
+
         print(f"\n{'='*60}", flush=True)
         print(f"自动化测试完成", flush=True)
         print(f"成功执行: {success_count}/{len(matched_cves)}", flush=True)
