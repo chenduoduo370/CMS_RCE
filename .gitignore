@@ -39,6 +39,8 @@ Thumbs.db
 # Project specific
 *.log
 .claude/
+*.old
+*.bak
 
 # Test coverage
 .coverage
