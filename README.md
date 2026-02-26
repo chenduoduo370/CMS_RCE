@@ -75,16 +75,6 @@ python poc_tool.py portscan 192.168.1.1 --common
 python poc_tool.py portscan 192.168.1.1 -r 1-1000
 ```
 
-#### 指纹识别
-
-```bash
-# 识别单个文件
-python poc_tool.py fingerprint http://192.168.1.1/style.css
-
-# 识别网站静态资源（CSS和JS）
-python poc_tool.py fingerprint http://192.168.1.1 --resources
-```
-
 #### 自动化渗透测试
 
 ```bash
@@ -135,7 +125,7 @@ GraduationProject/
 │   ├── exceptions.py           # 自定义异常
 │   ├── core/                   # 核心功能模块
 │   │   ├── url_utils.py        # URL工具函数
-│   │   └── vulnerability_verifier.py  # 漏洞验证框架（实验性）
+│   │   └── ai_skill.py         # AI辅助功能模块
 │   ├── cli/                    # CLI界面（重构版）
 │   │   ├── main.py             # CLI入口
 │   │   └── commands/           # 命令处理器
@@ -259,25 +249,6 @@ def verify(response, cmd: str):
 
 4. 工具会自动加载新的Payload模块
 
-## 指纹识别和CVE映射
-
-### 添加指纹映射
-
-```bash
-python poc_tool.py fingerprint http://example.com/style.css --add CVE_2019_6340
-```
-
-### 查询指纹对应的CVE
-
-```bash
-python poc_tool.py fingerprint http://example.com/style.css --query
-```
-
-### 删除指纹映射
-
-```bash
-python poc_tool.py fingerprint <md5_hash> --delete
-```
 
 ## 开发指南
 
@@ -307,6 +278,16 @@ python poc_tool.py send CVE_2019_6340 192.168.1.1:80 whoami --debug
 ## 重构历史
 
 本项目经过多次重构优化：
+
+### v1.3 - AI功能集成
+- ✅ 新增 `src/core/ai_skill.py` AI辅助功能模块
+- ✅ Worker 类模块化，从 poc_gui.py 迁移至 src/gui/workers/
+- ✅ 清理废弃文件，精简代码结构
+
+### v1.2 - CLI重构
+- ✅ CLI逻辑模块化，迁移至 src/cli/ 目录
+- ✅ poc_tool.py 精简为轻量入口
+- ✅ 命令处理器独立为 src/cli/commands/ 子模块
 
 ### v1.1 - 指纹识别增强
 - ✅ 支持多种资源类型（CSS、JS、图片、字体）
@@ -345,5 +326,5 @@ python poc_tool.py send CVE_2019_6340 192.168.1.1:80 whoami --debug
 
 ---
 
-**版本**: v1.1
-**最后更新**: 2026-02-25
+**版本**: v1.3
+**最后更新**: 2026-02-26
