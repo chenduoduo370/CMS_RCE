@@ -11,6 +11,7 @@ from .commands.send_command import SendCommand
 from .commands.list_command import ListCommand
 from .commands.generate_command import GenerateCommand
 from .commands.portscan_command import PortscanCommand
+from .commands.fingerprint_command import FingerprintCommand
 from .commands.auto_command import AutoCommand
 
 
@@ -26,6 +27,7 @@ def main():
   %(prog)s show CVE_2019_6340 192.168.1.1:80 id
   %(prog)s send CVE_2019_6340 192.168.1.1:80 whoami
   %(prog)s generate --packet-file packet.txt --cve-id CVE-2024-XXXX --save
+  %(prog)s fingerprint http://192.168.1.1:80/
   %(prog)s auto http://192.168.1.1:80/ --cmd "id"
   %(prog)s portscan 192.168.1.1 --common
         """
@@ -40,6 +42,7 @@ def main():
         'list': ListCommand(),
         'generate': GenerateCommand(),
         'portscan': PortscanCommand(),
+        'fingerprint': FingerprintCommand(),
         'auto': AutoCommand(),
     }
 

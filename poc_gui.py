@@ -3,10 +3,17 @@
 """
 CVE Payload工具 - 图形化界面
 基于 PyQt5 的 GUI 界面
+
+AI 模块说明：
+  - AI 通过自然语言与用户交互，收集参数
+  - AI 生成特殊标记（##PORTSCAN##, ##FINGERPRINT##, ##AUTOTEST##）
+  - GUI 解析标记，通过 CLI 命令调用底层功能（不是直接调用 Worker）
+  - 这样 AI 与底层代码隔离，只能通过预定义的命令行接口操作
 """
 
 import sys
 import os
+import subprocess
 from pathlib import Path
 import json
 
@@ -1799,13 +1806,92 @@ class MainWindow(QMainWindow):
             ports=ports, port_timeout=port_timeout
         )
 
+    def _execute_cli_command(self, cmd_list: list, callback_finished=None):
+        """
+        执行 CLI 命令（通过子进程）。
+
+        AI 不直接调用底层代码，而是通过预定义的命令行接口执行操作。
+        这样实现了 AI 与底层实现的隔离。
+
+        Args:
+            cmd_list: 命令列表，如 ['python', 'poc_tool.py', 'portscan', '192.168.1.1']
+            callback_finished: 执行完成后的回调函数
+
+        注意：
+            - 使用 threading 执行子进程，避免阻塞 GUI
+            - 输出实时显示到 AI 对话区
+        """
+        import threading
+        import queue
+
+        def run_command():
+            """在后台线程中执行命令"""
+            try:
+                # 获取项目根目录
+                project_root = os.path.dirname(os.path.abspath(__file__))
+                cmd_list[0] = os.path.join(project_root, cmd_list[0]) if cmd_list[0] == 'python' else cmd_list[0]
+
+                # 执行子进程
+                process = subprocess.Popen(
+                    cmd_list,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                    universal_newlines=True,
+                    cwd=project_root
+                )
+
+                # 实时读取输出
+                for line in process.stdout:
+                    # 将输出放到队列中，在主线程更新 UI
+                    output_queue.put(line)
+
+                process.wait()
+                output_queue.put(None)  # 标记完成
+
+            except Exception as e:
+                output_queue.put(f"[!] 命令执行错误: {e}\n")
+                output_queue.put(None)
+
+        def read_output():
+            """在主线程中读取输出并更新 UI"""
+            while True:
+                try:
+                    line = output_queue.get(timeout=0.1)
+                    if line is None:
+                        # 执行完成
+                        if callback_finished:
+                            callback_finished()
+                        break
+                    # 显示到对话区
+                    cursor = self.qw_chat_display.textCursor()
+                    cursor.movePosition(QTextCursor.End)
+                    cursor.insertText(line)
+                    self.qw_chat_display.setTextCursor(cursor)
+                    self.qw_chat_display.ensureCursorVisible()
+                except queue.Empty:
+                    continue
+
+        # 使用队列传递输出
+        output_queue = queue.Queue()
+
+        # 启动后台线程执行命令
+        thread = threading.Thread(target=run_command, daemon=True)
+        thread.start()
+
+        # 启动主线程读取输出
+        self._cli_output_thread = threading.Thread(target=read_output, daemon=True)
+        self._cli_output_thread.start()
+
     def _start_portscan_from_ai(self, host: str, ports=None, timeout: float = 2.0):
         """
-        【新增】由 AI 触发的端口扫描。
-        创建 PortScanWorker，并将结果输出到 AI 对话区。
+        由 AI 触发的端口扫描，通过 CLI 命令执行。
+
+        AI 不直接调用底层代码，而是通过预定义的命令行接口执行操作。
         """
         # 防止并发运行
-        if hasattr(self, '_ai_portscan_worker') and self._ai_portscan_worker and self._ai_portscan_worker.isRunning():
+        if hasattr(self, '_ai_cli_process') and self._ai_cli_process and self._ai_cli_process.is_alive():
             self.qw_chat_display.append("\n[AI执行] 有扫描正在进行，请等待完成后再试")
             self._log_ai_exec("permission_deny", "有扫描正在进行，拒绝新的请求")
             return
@@ -1820,30 +1906,41 @@ class MainWindow(QMainWindow):
             self.qw_chat_display.append(f"  扫描模式: 常用端口")
         self.qw_chat_display.append(f"{'='*50}")
 
-        # 记录执行日志
-        self._log_ai_exec("call_result", f"PortScanWorker 启动成功")
+        # 构建 CLI 命令
+        cli_cmd = ['python', 'poc_tool.py', 'portscan', host]
+        if ports:
+            if isinstance(ports, list):
+                ports_str = ','.join(map(str, ports))
+                cli_cmd.extend(['--ports', ports_str])
+            else:
+                cli_cmd.extend(['--ports', str(ports)])
+        else:
+            cli_cmd.append('--common')
+        cli_cmd.extend(['--timeout', str(timeout)])
+
+        # 记录执行日志（显示 CLI 命令）
+        self._log_ai_exec("call_result", "CLI 命令启动成功")
         self._log_ai_exec("call_info", f"目标: {host}")
         if ports:
             self._log_ai_exec("call_info", f"指定端口: {ports}")
-        self._log_ai_exec("call_info", f"超时设置: {timeout}秒")
+        self._log_ai_exec("call_info", f"CLI 命令: {' '.join(cli_cmd)}")
 
-        # 创建 PortScanWorker
-        self._ai_portscan_worker = PortScanWorker(
-            host=host,
-            ports=ports,
-            timeout=timeout,
-        )
-        self._ai_portscan_worker.finished.connect(self._on_ai_portscan_finished)
-        self._ai_portscan_worker.error.connect(self._on_ai_portscan_error)
-        self._ai_portscan_worker.start()
+        # 通过 CLI 命令执行
+        def on_finished():
+            self.qw_chat_display.append(f"\n{'='*50}")
+            self.qw_chat_display.append("[AI执行完成] 端口扫描完成")
+            self.qw_chat_display.append(f"{'='*50}")
+
+        self._execute_cli_command(cli_cmd, callback_finished=on_finished)
 
     def _start_fingerprint_from_ai(self, host: str, timeout: float = 3.0):
         """
-        【新增】由 AI 触发的资源指纹识别。
-        创建 CSSMD5Worker，并将结果输出到 AI 对话区。
+        由 AI 触发的资源指纹识别，通过 CLI 命令执行。
+
+        AI 不直接调用底层代码，而是通过预定义的命令行接口执行操作。
         """
         # 防止并发运行
-        if hasattr(self, '_ai_fingerprint_worker') and self._ai_fingerprint_worker and self._ai_fingerprint_worker.isRunning():
+        if hasattr(self, '_ai_cli_process') and self._ai_cli_process and self._ai_cli_process.is_alive():
             self.qw_chat_display.append("\n[AI执行] 有指纹识别正在进行，请等待完成后再试")
             self._log_ai_exec("permission_deny", "有指纹识别正在进行，拒绝新的请求")
             return
@@ -1854,19 +1951,22 @@ class MainWindow(QMainWindow):
         self.qw_chat_display.append(f"  目标: {host}")
         self.qw_chat_display.append(f"{'='*50}")
 
-        # 记录执行日志
-        self._log_ai_exec("call_result", f"CSSMD5Worker 启动成功")
-        self._log_ai_exec("call_info", f"目标: {host}")
-        self._log_ai_exec("call_info", f"超时设置: {timeout}秒")
+        # 构建 CLI 命令
+        cli_cmd = ['python', 'poc_tool.py', 'fingerprint', host]
+        cli_cmd.extend(['--timeout', str(timeout)])
 
-        # 创建 CSSMD5Worker
-        self._ai_fingerprint_worker = CSSMD5Worker(
-            url=host,
-            timeout=timeout,
-        )
-        self._ai_fingerprint_worker.finished.connect(self._on_ai_fingerprint_finished)
-        self._ai_fingerprint_worker.error.connect(self._on_ai_fingerprint_error)
-        self._ai_fingerprint_worker.start()
+        # 记录执行日志（显示 CLI 命令）
+        self._log_ai_exec("call_result", "CLI 命令启动成功")
+        self._log_ai_exec("call_info", f"目标: {host}")
+        self._log_ai_exec("call_info", f"CLI 命令: {' '.join(cli_cmd)}")
+
+        # 通过 CLI 命令执行
+        def on_finished():
+            self.qw_chat_display.append(f"\n{'='*50}")
+            self.qw_chat_display.append("[AI执行完成] 资源指纹识别完成")
+            self.qw_chat_display.append(f"{'='*50}")
+
+        self._execute_cli_command(cli_cmd, callback_finished=on_finished)
 
     def _on_ai_portscan_finished(self, results: dict):
         """端口扫描完成回调"""
@@ -1921,16 +2021,17 @@ class MainWindow(QMainWindow):
     def _start_autotest_from_ai(self, host: str, cmd: str = "whoami",
                                  do_port_scan: bool = False, ports=None, port_timeout: int = 2):
         """
-        【新增】由 AI 触发的渗透测试。
-        创建 AutoTestWorker，并将日志和结果输出到 AI 对话区。
+        由 AI 触发的渗透测试，通过 CLI 命令执行。
+
+        AI 不直接调用底层代码，而是通过预定义的命令行接口执行操作。
         """
         # 防止并发运行
-        if hasattr(self, '_ai_test_worker') and self._ai_test_worker and self._ai_test_worker.isRunning():
+        if hasattr(self, '_ai_cli_process') and self._ai_cli_process and self._ai_cli_process.is_alive():
             self.qw_chat_display.append("\n[AI执行] 有测试正在进行，请等待完成后再试")
             self._log_ai_exec("permission_deny", "有测试正在进行，拒绝新的请求")
             return
 
-        # 【修复】如果指定了端口列表，则自动开启扫描模式
+        # 如果指定了端口列表，则自动开启扫描模式
         if ports and isinstance(ports, list) and len(ports) > 0:
             do_port_scan = True
 
@@ -1944,30 +2045,30 @@ class MainWindow(QMainWindow):
             self.qw_chat_display.append(f"  端口扫描: {'是' if do_port_scan else '否'}")
         self.qw_chat_display.append(f"{'='*50}")
 
-        # 记录执行日志
-        self._log_ai_exec("call_result", f"AutoTestWorker 启动成功")
+        # 构建 CLI 命令
+        cli_cmd = ['python', 'poc_tool.py', 'auto', host]
+        cli_cmd.extend(['--cmd', cmd])
+        cli_cmd.extend(['--timeout', str(port_timeout)])
+
+        if ports and isinstance(ports, list):
+            ports_str = ','.join(map(str, ports))
+            cli_cmd.extend(['--ports', ports_str])
+
+        # 记录执行日志（显示 CLI 命令）
+        self._log_ai_exec("call_result", "CLI 命令启动成功")
         self._log_ai_exec("call_info", f"目标: {host}")
         self._log_ai_exec("call_info", f"端口扫描: {do_port_scan}")
         if ports:
             self._log_ai_exec("call_info", f"指定端口: {ports}")
-        self._log_ai_exec("call_info", f"超时设置: {port_timeout}秒")
+        self._log_ai_exec("call_info", f"CLI 命令: {' '.join(cli_cmd)}")
 
-        # 创建 AutoTestWorker 并连接到 AI 控制台的日志方法
-        self._ai_test_worker = AutoTestWorker(
-            url=host,
-            cmd=cmd,
-            fp_timeout=3,
-            send_timeout=10,
-            do_port_scan=do_port_scan,
-            ports=ports,  # 【修复】传入用户指定的端口列表
-            port_timeout=port_timeout,
-            verbose=False,  # 简洁输出
-        )
-        self._ai_test_worker.log_signal.connect(self._on_ai_test_log)
-        self._ai_test_worker.detail_signal.connect(self._on_ai_test_detail)
-        self._ai_test_worker.finished.connect(self._on_ai_test_finished)
-        self._ai_test_worker.error.connect(self._on_ai_test_error)
-        self._ai_test_worker.start()
+        # 通过 CLI 命令执行
+        def on_finished():
+            self.qw_chat_display.append(f"\n{'='*50}")
+            self.qw_chat_display.append("[AI执行完成] 渗透测试完成")
+            self.qw_chat_display.append(f"{'='*50}")
+
+        self._execute_cli_command(cli_cmd, callback_finished=on_finished)
 
     def _on_ai_test_log(self, msg: str):
         """【新增】AutoTestWorker 日志 → AI 对话区"""
