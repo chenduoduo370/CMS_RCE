@@ -309,10 +309,11 @@ class MainWindow(QMainWindow):
         """
         创建 AI 对话控制台标签页。
 
-        布局（从上到下）：
-          1. 配置区域（QGroupBox）: API Key 输入、模型选择、保存/加载按钮
-          2. 对话显示区（QGroupBox）: 只读 QTextEdit，展示多轮对话
-          3. 输入区域（QGroupBox）: 用户输入框 + 发送/停止/清空按钮
+        布局：
+          上部分（配置区）：API Key、模型选择、按钮
+          中部分（水平分割）：
+            - 左侧：对话记录 + 输入区域
+            - 右侧：AI 执行日志（记录代码调用和权限验证）
         """
         widget = QWidget()
         main_layout = QVBoxLayout()
@@ -363,7 +364,13 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(config_group)
         main_layout.addWidget(config_btn_group)
 
-        # ── 2. 对话显示区域 ──────────────────────────────────────────
+        # ── 2. 中部分：水平分割（对话区 + 执行日志）──────────────────
+        content_layout = QHBoxLayout()
+
+        # ── 2.1 左侧：对话区 + 输入区 ──────────────────────────────
+        left_layout = QVBoxLayout()
+
+        # 对话显示区域
         chat_group = QGroupBox("对话记录")
         chat_layout = QVBoxLayout()
 
@@ -371,12 +378,11 @@ class MainWindow(QMainWindow):
         self.qw_chat_display.setReadOnly(True)
         self.qw_chat_display.setFont(QFont("Consolas", 10))
         self.qw_chat_display.setPlaceholderText("对话将在此显示...")
-        # 拉伸比例：对话区占主要空间
         chat_layout.addWidget(self.qw_chat_display)
         chat_group.setLayout(chat_layout)
-        main_layout.addWidget(chat_group, stretch=3)
+        left_layout.addWidget(chat_group, stretch=3)
 
-        # ── 3. 用户输入区域 ──────────────────────────────────────────
+        # 用户输入区域
         input_group = QGroupBox("输入消息")
         input_layout = QVBoxLayout()
 
@@ -417,7 +423,30 @@ class MainWindow(QMainWindow):
 
         input_layout.addLayout(input_btn_layout)
         input_group.setLayout(input_layout)
-        main_layout.addWidget(input_group, stretch=1)
+        left_layout.addWidget(input_group, stretch=1)
+
+        # ── 2.2 右侧：AI 执行日志 ──────────────────────────────────
+        exec_log_group = QGroupBox("AI 执行日志")
+        exec_log_layout = QVBoxLayout()
+
+        self.qw_exec_log_display = QTextEdit()
+        self.qw_exec_log_display.setReadOnly(True)
+        self.qw_exec_log_display.setFont(QFont("Consolas", 9))
+        self.qw_exec_log_display.setPlaceholderText("AI 调用的代码和权限验证信息将在此显示...")
+        exec_log_layout.addWidget(self.qw_exec_log_display)
+
+        # 清空日志按钮
+        clear_log_btn = QPushButton("清空日志")
+        clear_log_btn.clicked.connect(self._clear_ai_exec_log)
+        exec_log_layout.addWidget(clear_log_btn)
+
+        exec_log_group.setLayout(exec_log_layout)
+
+        # 添加左右两部分到内容布局
+        content_layout.addLayout(left_layout, stretch=2)
+        content_layout.addWidget(exec_log_group, stretch=1)
+
+        main_layout.addLayout(content_layout, stretch=1)
 
         widget.setLayout(main_layout)
 
@@ -425,6 +454,7 @@ class MainWindow(QMainWindow):
         self._qianwen_history = []   # List[dict]，存储多轮 messages
         self._qianwen_worker = None  # 当前 worker 引用
         self._current_ai_response = ""  # 用于收集完整 AI 回复
+        self._ai_exec_log = []  # AI 执行日志列表
 
         # 启动时尝试自动加载已保存的配置
         self._load_ai_config(silent=True)
@@ -435,6 +465,16 @@ class MainWindow(QMainWindow):
             "模型: 阿里云千问（OpenAI Compatible API）\n"
             "请先配置 API Key，然后开始对话。\n"
             "提示: 可以询问 CVE 漏洞分析、渗透测试方法等安全相关问题。\n"
+            + "=" * 50
+        )
+
+        # 显示执行日志欢迎信息
+        self.qw_exec_log_display.append(
+            "=== AI 执行日志 ===\n"
+            "此面板记录 AI 调用的代码信息和权限验证。\n"
+            "- 绿色 ✓：权限验证通过\n"
+            "- 红色 ✗：权限被拒绝\n"
+            "- 蓝色 ℹ：调用信息\n"
             + "=" * 50
         )
 
@@ -1634,20 +1674,32 @@ class MainWindow(QMainWindow):
         if "##AUTOTEST##" not in response:
             return
 
+        # 权限检查：检测到 ##AUTOTEST## 标记
+        self._log_ai_exec("permission_check", "检测到 ##AUTOTEST## 标记，开始权限验证")
+
         match = re.search(r'##AUTOTEST##(\{.+?\})##END##', response, re.DOTALL)
         if not match:
+            self._log_ai_exec("permission_deny", "标记格式错误，权限拒绝")
             return
 
         try:
             params = json.loads(match.group(1))
+            self._log_ai_exec("call_info", f"解析参数成功: {json.dumps(params, ensure_ascii=False)}")
         except json.JSONDecodeError:
             self.qw_chat_display.append("\n[AI执行] 参数解析失败，请重试")
+            self._log_ai_exec("permission_deny", "JSON 解析失败，权限拒绝")
             return
 
         host = params.get("host", "").strip()
         if not host:
             self.qw_chat_display.append("\n[AI执行] 缺少目标地址，无法执行")
+            self._log_ai_exec("permission_deny", "缺少目标地址参数，权限拒绝")
             return
+
+        # 权限通过：调用高级功能内的 AutoTestWorker
+        self._log_ai_exec("permission_pass", "权限验证通过，调用 AutoTestWorker（高级功能）")
+        self._log_ai_exec("call_info", f"调用模块: src.gui.workers.AutoTestWorker")
+        self._log_ai_exec("call_info", f"调用参数: host={host}, cmd={params.get('cmd', 'whoami')}, do_port_scan={params.get('do_port_scan', False)}, ports={params.get('ports', None)}")
 
         self._start_autotest_from_ai(
             host=host,
@@ -1666,6 +1718,7 @@ class MainWindow(QMainWindow):
         # 防止并发运行
         if hasattr(self, '_ai_test_worker') and self._ai_test_worker and self._ai_test_worker.isRunning():
             self.qw_chat_display.append("\n[AI执行] 有测试正在进行，请等待完成后再试")
+            self._log_ai_exec("permission_deny", "有测试正在进行，拒绝新的请求")
             return
 
         # 【修复】如果指定了端口列表，则自动开启扫描模式
@@ -1681,6 +1734,14 @@ class MainWindow(QMainWindow):
         else:
             self.qw_chat_display.append(f"  端口扫描: {'是' if do_port_scan else '否'}")
         self.qw_chat_display.append(f"{'='*50}")
+
+        # 记录执行日志
+        self._log_ai_exec("call_result", f"AutoTestWorker 启动成功")
+        self._log_ai_exec("call_info", f"目标: {host}")
+        self._log_ai_exec("call_info", f"端口扫描: {do_port_scan}")
+        if ports:
+            self._log_ai_exec("call_info", f"指定端口: {ports}")
+        self._log_ai_exec("call_info", f"超时设置: {port_timeout}秒")
 
         # 创建 AutoTestWorker 并连接到 AI 控制台的日志方法
         self._ai_test_worker = AutoTestWorker(
@@ -1801,6 +1862,75 @@ class MainWindow(QMainWindow):
             self._current_ai_response = ""
             self.qw_chat_display.clear()
             self.qw_chat_display.append("对话已清空，可重新开始。")
+
+    def _clear_ai_exec_log(self):
+        """清空 AI 执行日志"""
+        reply = QMessageBox.question(
+            self, "确认", "确定要清空 AI 执行日志吗？",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply == QMessageBox.Yes:
+            self._ai_exec_log = []
+            self.qw_exec_log_display.clear()
+            self.qw_exec_log_display.append(
+                "=== AI 执行日志 ===\n"
+                "此面板记录 AI 调用的代码信息和权限验证。\n"
+                "- 绿色 ✓：权限验证通过\n"
+                "- 红色 ✗：权限被拒绝\n"
+                "- 蓝色 ℹ：调用信息\n"
+                + "=" * 50
+            )
+
+    def _log_ai_exec(self, log_type: str, message: str):
+        """
+        记录 AI 执行日志到执行日志面板。
+
+        Args:
+            log_type: 日志类型，可选值：
+                - "permission_check": 权限检查
+                - "permission_pass": 权限通过 ✓
+                - "permission_deny": 权限拒绝 ✗
+                - "call_info": 调用信息 ℹ
+                - "call_result": 调用结果
+            message: 日志消息
+        """
+        try:
+            timestamp = __import__('datetime').datetime.now().strftime("%H:%M:%S")
+
+            # 根据类型添加前缀和颜色
+            if log_type == "permission_pass":
+                prefix = "✓ [权限通过]"
+                colored_msg = f"<span style='color: green;'>{prefix} {timestamp}: {message}</span>"
+            elif log_type == "permission_deny":
+                prefix = "✗ [权限拒绝]"
+                colored_msg = f"<span style='color: red;'>{prefix} {timestamp}: {message}</span>"
+            elif log_type == "permission_check":
+                prefix = "🔍 [权限检查]"
+                colored_msg = f"<span style='color: blue;'>{prefix} {timestamp}: {message}</span>"
+            elif log_type == "call_info":
+                prefix = "ℹ [调用信息]"
+                colored_msg = f"<span style='color: blue;'>{prefix} {timestamp}: {message}</span>"
+            elif log_type == "call_result":
+                prefix = "📊 [调用结果]"
+                colored_msg = f"<span style='color: purple;'>{prefix} {timestamp}: {message}</span>"
+            else:
+                colored_msg = f"[{log_type}] {timestamp}: {message}"
+
+            # 添加到日志列表
+            self._ai_exec_log.append({
+                "timestamp": timestamp,
+                "type": log_type,
+                "message": message
+            })
+
+            # 显示到执行日志面板
+            cursor = self.qw_exec_log_display.textCursor()
+            cursor.movePosition(QTextCursor.End)
+            self.qw_exec_log_display.setTextCursor(cursor)
+            self.qw_exec_log_display.insertHtml(f"\n{colored_msg}")
+            self.qw_exec_log_display.ensureCursorVisible()
+        except Exception as e:
+            pass  # 日志记录失败不影响主流程
 
     def eventFilter(self, obj, event):
         """
