@@ -44,17 +44,3 @@ class MappingError(CVEToolException):
     """指纹-CVE映射错误异常"""
     pass
 
-
-class AIError(CVEToolException):
-    """AI功能相关错误的基类"""
-    pass
-
-
-class LLMAPIError(AIError):
-    """LLM API调用失败"""
-    pass
-
-
-class LLMConfigError(AIError):
-    """LLM配置错误"""
-    pass

@@ -1082,22 +1082,18 @@ class MainWindow(QMainWindow):
         self.auto_port_timeout_spin.setValue(2)
         input_layout.addRow("端口超时(秒):", self.auto_port_timeout_spin)
         
-        # 全量端口 / 常用端口 复选框
-        self.auto_use_all_ports_chk = QCheckBox("全量端口 (1-65535)")
-        self.auto_use_all_ports_chk.setChecked(False)
-        self.auto_use_common_ports_chk = QCheckBox("常用端口")
-        self.auto_use_common_ports_chk.setChecked(True)
-        # 将两个复选框放在一行
-        hbox = QHBoxLayout()
-        hbox.addWidget(self.auto_use_all_ports_chk)
-        hbox.addWidget(self.auto_use_common_ports_chk)
-        input_layout.addRow("端口集合选项:", hbox)
-        
+        # 端口集合选项 - 改用下拉框
+        self.auto_port_mode_combo = QComboBox()
+        self.auto_port_mode_combo.addItem("自定义端口", "custom")
+        self.auto_port_mode_combo.addItem("常用端口", "common")
+        self.auto_port_mode_combo.addItem("全量端口 (1-65535)", "all")
+        self.auto_port_mode_combo.setCurrentIndex(1)  # 默认选择常用端口
+        input_layout.addRow("端口集合选项:", self.auto_port_mode_combo)
+
         # 连接交互信号，控制互斥与启用状态
         try:
             self.auto_portscan_chk.toggled.connect(self.on_auto_portscan_toggled)
-            self.auto_use_all_ports_chk.toggled.connect(self.on_auto_ports_option_changed)
-            self.auto_use_common_ports_chk.toggled.connect(self.on_auto_ports_option_changed)
+            self.auto_port_mode_combo.currentIndexChanged.connect(self.on_auto_port_mode_changed)
             self.auto_ports_input.textChanged.connect(self.on_auto_ports_input_changed)
         except Exception:
             pass
@@ -1113,12 +1109,17 @@ class MainWindow(QMainWindow):
         
         # 按钮区域（包装在小边框中）
         button_layout = QHBoxLayout()
-        
+
         self.auto_test_btn = QPushButton("开始自动化测试")
         self.auto_test_btn.setObjectName("primary")
         self.auto_test_btn.clicked.connect(self.start_auto_test)
         button_layout.addWidget(self.auto_test_btn)
-        
+
+        self.auto_stop_btn = QPushButton("停止扫描")
+        self.auto_stop_btn.setEnabled(False)
+        self.auto_stop_btn.clicked.connect(self.stop_auto_test)
+        button_layout.addWidget(self.auto_stop_btn)
+
         self.auto_clear_btn = QPushButton("清空日志")
         self.auto_clear_btn.clicked.connect(lambda: self.auto_result_text.clear())
         try:
@@ -1167,6 +1168,11 @@ class MainWindow(QMainWindow):
     
     def start_auto_test(self):
         """开始自动化测试"""
+        # 确保旧的 worker 已经完全停止
+        if hasattr(self, 'auto_worker') and self.auto_worker and self.auto_worker.isRunning():
+            self.auto_worker.stop()
+            self.auto_worker.wait()  # 等待 worker 线程完全退出
+
         host_input = self.auto_url_input.text().strip()
         # 使用默认参数
         cmd = "whoami"
@@ -1182,25 +1188,35 @@ class MainWindow(QMainWindow):
         except Exception:
             do_port_scan = False
 
-        # 解析自定义端口输入（若有）
+        # 根据下拉框选择确定端口列表
         ports_list = None
-        ports_text = ""
         try:
-            ports_text = self.auto_ports_input.text().strip()
-        except Exception:
-            ports_text = ""
+            port_mode = self.auto_port_mode_combo.currentData()
 
-        if ports_text:
-            try:
-                if '-' in ports_text and ',' not in ports_text:
-                    start, end = ports_text.split('-', 1)
-                    ports_list = list(range(int(start.strip()), int(end.strip()) + 1))
+            if port_mode == "custom":
+                # 自定义端口模式
+                ports_text = self.auto_ports_input.text().strip()
+                if ports_text:
+                    try:
+                        if '-' in ports_text and ',' not in ports_text:
+                            start, end = ports_text.split('-', 1)
+                            ports_list = list(range(int(start.strip()), int(end.strip()) + 1))
+                        else:
+                            ports_list = [int(p.strip()) for p in ports_text.split(',') if p.strip()]
+                    except Exception:
+                        QMessageBox.warning(self, "警告", "端口格式错误，请使用逗号分隔或范围（如 80,443 或 1-1024）")
+                        return
                 else:
-                    ports_list = [int(p.strip()) for p in ports_text.split(',') if p.strip()]
-            except Exception:
-                QMessageBox.warning(self, "警告", "端口格式错误，请使用逗号分隔或范围（如 80,443 或 1-1024）")
-                # 恢复为 None，让扫描使用默认常见端口集合
+                    QMessageBox.warning(self, "警告", "请输入自定义端口")
+                    return
+            elif port_mode == "all":
+                # 全量端口
+                ports_list = list(range(1, 65536))
+            else:
+                # 常用端口（port_mode == "common"）
                 ports_list = None
+        except Exception:
+            ports_list = None
 
         # 端口超时
         try:
@@ -1208,25 +1224,12 @@ class MainWindow(QMainWindow):
         except Exception:
             port_timeout = 2
 
-        # 如果用户没有提供自定义端口，按复选框选择端口集合
-        if not ports_text:
-            try:
-                if getattr(self, "auto_use_all_ports_chk", None) and self.auto_use_all_ports_chk.isChecked():
-                    # 全量端口
-                    ports_list = list(range(1, 65536))
-                elif getattr(self, "auto_use_common_ports_chk", None) and self.auto_use_common_ports_chk.isChecked():
-                    # 常用端口：传 None 让 scan_ports 使用 COMMON_PORTS
-                    ports_list = None
-                else:
-                    ports_list = None
-            except Exception:
-                ports_list = None
-
         # 禁用按钮
         self.auto_test_btn.setEnabled(False)
         self.auto_test_btn.setText("测试中...")
+        self.auto_stop_btn.setEnabled(True)
         self.auto_result_text.clear()
-        
+
         # 创建工作线程，传入端口扫描参数
         self.auto_worker = AutoTestWorker(host_input, cmd, fp_timeout, send_timeout,
                                          do_port_scan=do_port_scan, ports=ports_list, port_timeout=port_timeout)
@@ -1240,6 +1243,12 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         self.auto_worker.start()
+
+    def stop_auto_test(self):
+        """停止自动化测试"""
+        if hasattr(self, 'auto_worker') and self.auto_worker and self.auto_worker.isRunning():
+            self.auto_worker.stop()
+            self.auto_stop_btn.setEnabled(False)
     
     def on_auto_test_log(self, msg):
         """自动化测试日志回调"""
@@ -1253,7 +1262,8 @@ class MainWindow(QMainWindow):
         """自动化测试完成回调"""
         self.auto_test_btn.setEnabled(True)
         self.auto_test_btn.setText("开始自动化测试")
-        
+        self.auto_stop_btn.setEnabled(False)
+
         self.auto_result_text.append("\n" + "=" * 60)
         self.auto_result_text.append("自动化测试完成")
         self.auto_result_text.append(f"成功执行: {success_count}/{total_count}")
@@ -1796,29 +1806,25 @@ class BatchCommandDialog(QDialog):
             enabled = bool(checked)
             self.auto_ports_input.setEnabled(enabled)
             self.auto_port_timeout_spin.setEnabled(enabled)
-            self.auto_use_all_ports_chk.setEnabled(enabled)
-            self.auto_use_common_ports_chk.setEnabled(enabled)
+            self.auto_port_mode_combo.setEnabled(enabled)
             # 当禁用端口扫描时，清空表格的端口选择状态（保持默认行为）
             if not enabled:
                 self.auto_ports_input.clear()
-                self.auto_use_all_ports_chk.setChecked(False)
-                self.auto_use_common_ports_chk.setChecked(True)
+                self.auto_port_mode_combo.setCurrentIndex(1)  # 恢复为常用端口
         except Exception:
             pass
 
-    def on_auto_ports_option_changed(self, checked: bool):
-        """处理全量/常用复选框互斥与自定义输入互斥逻辑"""
+    def on_auto_port_mode_changed(self, index):
+        """处理端口模式改变"""
         try:
-            # 如果用户选中全量端口，则取消常用端口选择，禁用自定义输入
-            if self.auto_use_all_ports_chk.isChecked():
-                self.auto_use_common_ports_chk.setChecked(False)
-                self.auto_ports_input.setEnabled(False)
-            elif self.auto_use_common_ports_chk.isChecked():
-                self.auto_use_all_ports_chk.setChecked(False)
-                self.auto_ports_input.setEnabled(False)
-            else:
-                # 两者都未选中，则允许自定义端口输入
+            mode = self.auto_port_mode_combo.currentData()
+            if mode == "custom":
+                # 自定义端口模式，启用输入框
                 self.auto_ports_input.setEnabled(True)
+            else:
+                # 预设模式，禁用输入框
+                self.auto_ports_input.setEnabled(False)
+                self.auto_ports_input.clear()
         except Exception:
             pass
 
@@ -1829,15 +1835,21 @@ class BatchCommandDialog(QDialog):
             if txt:
                 # 清除其他复选框，优先使用自定义端口
                 try:
+                    self.auto_use_all_ports_chk.blockSignals(True)
+                    self.auto_use_common_ports_chk.blockSignals(True)
                     self.auto_use_all_ports_chk.setChecked(False)
                     self.auto_use_common_ports_chk.setChecked(False)
+                    self.auto_use_all_ports_chk.blockSignals(False)
+                    self.auto_use_common_ports_chk.blockSignals(False)
                 except Exception:
                     pass
             else:
                 # 如果自定义输入变为空，恢复常用端口默认选中
                 try:
                     if not self.auto_use_all_ports_chk.isChecked() and not self.auto_use_common_ports_chk.isChecked():
+                        self.auto_use_common_ports_chk.blockSignals(True)
                         self.auto_use_common_ports_chk.setChecked(True)
+                        self.auto_use_common_ports_chk.blockSignals(False)
                 except Exception:
                     pass
         except Exception:

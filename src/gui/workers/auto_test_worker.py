@@ -27,8 +27,21 @@ class AutoTestWorker(QThread):
         self.do_port_scan = do_port_scan
         self.ports = ports
         self.port_timeout = port_timeout
+        # 中断标志
+        self._stop_flag = False
+
+    def stop(self):
+        """请求停止扫描"""
+        self._stop_flag = True
+        self.log_signal.emit("[*] 正在停止扫描...")
+
+    def _check_stop(self):
+        """检查是否需要停止"""
+        return self._stop_flag
 
     def run(self):
+        success_count = 0
+        total_cves = 0
         try:
             from urllib.parse import urlparse
             from fingerprint import get_css_files_md5_from_page
@@ -44,6 +57,12 @@ class AutoTestWorker(QThread):
 
             # 步骤1：端口扫描 -> 对每个开放端口进行指纹识别
             self.log_signal.emit("[*] 步骤1: 端口扫描（若启用）并对开放端口进行指纹识别...")
+
+            # 检查中断标志
+            if self._check_stop():
+                self.log_signal.emit("[!] 扫描已被中断")
+                self.finished.emit(success_count, total_cves)
+                return
 
             # 解析主机与提供的端口
             provided_port = None
@@ -71,7 +90,13 @@ class AutoTestWorker(QThread):
             if self.do_port_scan and scan_ports is not None:
                 try:
                     self.log_signal.emit(f"    [+] 扫描目标: {base_host}")
-                    scan_results = scan_ports(base_host, self.ports, timeout=self.port_timeout)
+                    scan_results = scan_ports(
+                        base_host,
+                        self.ports,
+                        timeout=self.port_timeout,
+                        log_callback=lambda msg: self.log_signal.emit(msg),
+                        stop_flag=self._check_stop
+                    )
                     open_ports = sorted([p for p, (is_open, _) in scan_results.items() if is_open])
                     if open_ports:
                         self.log_signal.emit(f"    [+] 发现开放端口: {', '.join(str(p) for p in open_ports)}")
@@ -87,14 +112,35 @@ class AutoTestWorker(QThread):
             # 对每个开放端口做指纹识别，收集匹配到的 CVE（按端口映射）
             if get_css_files_md5_from_page is None:
                 self.error.emit("指纹模块未加载")
+                self.finished.emit(success_count, total_cves)
                 return
 
             matched_cves_per_port = {}  # cve -> set(ports)
             for port in open_ports:
+                # 检查中断标志
+                if self._check_stop():
+                    self.log_signal.emit("[!] 扫描已被中断")
+                    self.finished.emit(success_count, total_cves)
+                    return
+
                 try:
                     url_for_fp = f"http://{base_host}:{port}/"
                     self.log_signal.emit(f"    [*] 对 {url_for_fp} 进行指纹识别...")
+
+                    # 再次检查中断标志（在长时间操作前）
+                    if self._check_stop():
+                        self.log_signal.emit("[!] 扫描已被中断")
+                        self.finished.emit(success_count, total_cves)
+                        return
+
                     css_md5_dict = get_css_files_md5_from_page(url_for_fp, self.fp_timeout)
+
+                    # 再次检查中断标志（在长时间操作后）
+                    if self._check_stop():
+                        self.log_signal.emit("[!] 扫描已被中断")
+                        self.finished.emit(success_count, total_cves)
+                        return
+
                     if not css_md5_dict:
                         self.log_signal.emit(f"    [-] {url_for_fp} 未提取到 CSS 或访问失败")
                         continue
@@ -114,6 +160,7 @@ class AutoTestWorker(QThread):
             matched_cves = set(matched_cves_per_port.keys())
             if not matched_cves:
                 self.error.emit("未匹配到任何CVE，自动化测试结束")
+                self.finished.emit(success_count, total_cves)
                 return
 
             self.log_signal.emit(f"\n[+] 匹配到的 CVE: {', '.join(sorted(matched_cves))}")
@@ -147,11 +194,16 @@ class AutoTestWorker(QThread):
 
             # 对每个匹配到的 CVE，只在该 CVE 匹配到的端口上执行对应 Payload
             for cve_id in sorted(matched_cves):
-                module_name = cve_id.replace('-', '_')
+                # 检查中断标志
+                if self._check_stop():
+                    self.log_signal.emit("[!] 扫描已被中断")
+                    self.finished.emit(success_count, total_cves)
+                    return
                 ports_for_cve = sorted(matched_cves_per_port.get(cve_id, [])) or []
                 # 保存原始尝试端口，用于在结果汇总中展示完整的尝试端口
                 attempted_ports = ports_for_cve.copy()
 
+                module_name = cve_id.replace('-', '_')
                 self.log_signal.emit(f"\n{'='*60}")
                 self.log_signal.emit(f"[*] 尝试执行 Payload: {module_name}")
                 self.log_signal.emit(f"    匹配端口: {', '.join(str(p) for p in ports_for_cve) if ports_for_cve else '(无)'}")
@@ -166,9 +218,15 @@ class AutoTestWorker(QThread):
                 else:
                     # 对所有匹配端口都尝试执行，并收集成功的端口，失败的端口将被剔除
                     for port in ports_for_cve:
+                        # 检查中断标志
+                        if self._check_stop():
+                            self.log_signal.emit("[!] 扫描已被中断")
+                            self.finished.emit(success_count, total_cves)
+                            return
                         ip_port = f"{base_host}:{port}"
                         self.log_signal.emit(f"    [*] 目标: {ip_port}，执行命令: {self.cmd}")
                         try:
+                            # 执行 Payload
                             result = payload_manager.send_payload_safe(
                                 module_name, ip_port, self.cmd,
                                 timeout=self.send_timeout,
