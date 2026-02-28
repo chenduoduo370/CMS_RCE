@@ -1378,7 +1378,8 @@ class MainWindow(QMainWindow):
 
         # 创建工作线程，传入端口扫描参数
         self.auto_worker = AutoTestWorker(host_input, cmd, fp_timeout, send_timeout,
-                                         do_port_scan=do_port_scan, ports=ports_list, port_timeout=port_timeout)
+                                         do_port_scan=do_port_scan, ports=ports_list, port_timeout=port_timeout,
+                                         verbose=False)
         self.auto_worker.log_signal.connect(self.on_auto_test_log)
         self.auto_worker.detail_signal.connect(self.on_auto_test_detail)
         self.auto_worker.finished.connect(self.on_auto_test_finished)
@@ -1684,6 +1685,7 @@ class MainWindow(QMainWindow):
             do_port_scan=do_port_scan,
             ports=ports,  # 【修复】传入用户指定的端口列表
             port_timeout=port_timeout,
+            verbose=False,  # 简洁输出
         )
         self._ai_test_worker.log_signal.connect(self._on_ai_test_log)
         self._ai_test_worker.detail_signal.connect(self._on_ai_test_detail)
