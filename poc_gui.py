@@ -69,7 +69,8 @@ from src.gui.workers import (
     GenerateWorker,
     CSSMD5Worker,
     AutoTestWorker,
-    PortScanWorker
+    PortScanWorker,
+    QianwenWorker
 )
 
 
@@ -292,8 +293,153 @@ class MainWindow(QMainWindow):
         advanced_widget.setLayout(advanced_layout)
         tabs.addTab(advanced_widget, "高级功能")
 
+        # AI 控制台（顶级标签页）
+        try:
+            ai_console_tab = self.create_ai_console_tab()
+            tabs.addTab(ai_console_tab, "AI 控制台")
+        except Exception as e:
+            try:
+                print(f"[!] 无法创建 AI 控制台标签页: {e}", flush=True)
+            except Exception:
+                pass
+
         self.setCentralWidget(tabs)
-    
+
+    def create_ai_console_tab(self):
+        """
+        创建 AI 对话控制台标签页。
+
+        布局（从上到下）：
+          1. 配置区域（QGroupBox）: API Key 输入、模型选择、保存/加载按钮
+          2. 对话显示区（QGroupBox）: 只读 QTextEdit，展示多轮对话
+          3. 输入区域（QGroupBox）: 用户输入框 + 发送/停止/清空按钮
+        """
+        widget = QWidget()
+        main_layout = QVBoxLayout()
+
+        # ── 1. 配置区域 ──────────────────────────────────────────────
+        config_group = QGroupBox("千问 API 配置")
+        config_layout = QFormLayout()
+
+        # API Key 输入（密码模式，不明文显示）
+        self.qw_api_key_input = QLineEdit()
+        self.qw_api_key_input.setEchoMode(QLineEdit.Password)
+        self.qw_api_key_input.setPlaceholderText("请输入阿里云千问 API Key（sk-...）")
+        config_layout.addRow("API Key:", self.qw_api_key_input)
+
+        # 模型选择下拉框
+        self.qw_model_combo = QComboBox()
+        try:
+            from src.config import Config
+            for model in Config.QIANWEN_MODELS:
+                self.qw_model_combo.addItem(model)
+            self.qw_model_combo.setCurrentText(Config.QIANWEN_DEFAULT_MODEL)
+        except Exception:
+            # 降级：硬编码模型列表
+            for model in ["qwen-plus", "qwen-turbo", "qwen-max"]:
+                self.qw_model_combo.addItem(model)
+        config_layout.addRow("模型:", self.qw_model_combo)
+
+        config_group.setLayout(config_layout)
+
+        # 配置按钮行
+        config_btn_layout = QHBoxLayout()
+        save_config_btn = QPushButton("保存配置")
+        save_config_btn.clicked.connect(self._save_ai_config)
+        config_btn_layout.addWidget(save_config_btn)
+
+        load_config_btn = QPushButton("加载配置")
+        load_config_btn.clicked.connect(self._load_ai_config)
+        config_btn_layout.addWidget(load_config_btn)
+        config_btn_layout.addStretch()
+
+        config_btn_group = QGroupBox()
+        config_btn_group.setTitle("")
+        config_btn_group.setLayout(config_btn_layout)
+        config_btn_group.setStyleSheet(
+            "QGroupBox { border: 1px solid #d0d0d0; padding:4px; border-radius:4px; }"
+        )
+
+        main_layout.addWidget(config_group)
+        main_layout.addWidget(config_btn_group)
+
+        # ── 2. 对话显示区域 ──────────────────────────────────────────
+        chat_group = QGroupBox("对话记录")
+        chat_layout = QVBoxLayout()
+
+        self.qw_chat_display = QTextEdit()
+        self.qw_chat_display.setReadOnly(True)
+        self.qw_chat_display.setFont(QFont("Consolas", 10))
+        self.qw_chat_display.setPlaceholderText("对话将在此显示...")
+        # 拉伸比例：对话区占主要空间
+        chat_layout.addWidget(self.qw_chat_display)
+        chat_group.setLayout(chat_layout)
+        main_layout.addWidget(chat_group, stretch=3)
+
+        # ── 3. 用户输入区域 ──────────────────────────────────────────
+        input_group = QGroupBox("输入消息")
+        input_layout = QVBoxLayout()
+
+        # 多行输入框（支持 Shift+Enter 换行，Ctrl+Enter 发送）
+        self.qw_user_input = QTextEdit()
+        self.qw_user_input.setMaximumHeight(80)
+        self.qw_user_input.setFont(QFont("Microsoft YaHei", 10))
+        self.qw_user_input.setPlaceholderText(
+            "输入问题，按 Ctrl+Enter 发送，支持多行输入..."
+        )
+        # 安装事件过滤器以捕获 Ctrl+Enter
+        self.qw_user_input.installEventFilter(self)
+        input_layout.addWidget(self.qw_user_input)
+
+        # 按钮行
+        input_btn_layout = QHBoxLayout()
+
+        self.qw_send_btn = QPushButton("发送")
+        self.qw_send_btn.setObjectName("primary")
+        self.qw_send_btn.clicked.connect(self._send_qianwen_message)
+        input_btn_layout.addWidget(self.qw_send_btn)
+
+        self.qw_stop_btn = QPushButton("停止")
+        self.qw_stop_btn.setEnabled(False)
+        self.qw_stop_btn.clicked.connect(self._stop_qianwen)
+        input_btn_layout.addWidget(self.qw_stop_btn)
+
+        clear_chat_btn = QPushButton("清空对话")
+        clear_chat_btn.clicked.connect(self._clear_qianwen_chat)
+        input_btn_layout.addWidget(clear_chat_btn)
+
+        input_btn_layout.addStretch()
+
+        # 字符计数标签（辅助用户了解输入长度）
+        self.qw_char_count_label = QLabel("0 字符")
+        input_btn_layout.addWidget(self.qw_char_count_label)
+        self.qw_user_input.textChanged.connect(self._update_char_count)
+
+        input_layout.addLayout(input_btn_layout)
+        input_group.setLayout(input_layout)
+        main_layout.addWidget(input_group, stretch=1)
+
+        widget.setLayout(main_layout)
+
+        # 初始化对话历史（内部状态，由 MainWindow 维护）
+        self._qianwen_history = []   # List[dict]，存储多轮 messages
+        self._qianwen_worker = None  # 当前 worker 引用
+        self._current_ai_response = ""  # 用于收集完整 AI 回复
+
+        # 启动时尝试自动加载已保存的配置
+        self._load_ai_config(silent=True)
+
+        # 显示欢迎信息
+        self.qw_chat_display.append(
+            "=== 千问 AI 渗透测试助手 ===\n"
+            "模型: 阿里云千问（OpenAI Compatible API）\n"
+            "请先配置 API Key，然后开始对话。\n"
+            "提示: 可以询问 CVE 漏洞分析、渗透测试方法等安全相关问题。\n"
+            + "=" * 50
+        )
+
+        return widget
+
     def create_payload_tab(self):
         """创建 Payload 操作标签页"""
         widget = QWidget()
@@ -1162,7 +1308,7 @@ class MainWindow(QMainWindow):
         summary_layout.addWidget(self.auto_result_table)
         summary_group.setLayout(summary_layout)
         layout.addWidget(summary_group)
-        
+
         widget.setLayout(layout)
         return widget
     
@@ -1257,7 +1403,419 @@ class MainWindow(QMainWindow):
         cursor = self.auto_result_text.textCursor()
         cursor.movePosition(QTextCursor.End)
         self.auto_result_text.setTextCursor(cursor)
-    
+
+    def refresh_ai_console(self):
+        """
+        原方法：刷新静态系统信息。
+        现在重定向为：刷新/重置 AI 控制台状态（保持方法名兼容）。
+        """
+        # 对话显示区仍可用，只重置 worker 引用
+        try:
+            if self._qianwen_worker and self._qianwen_worker.isRunning():
+                self._qianwen_worker.stop()
+            self._qianwen_worker = None
+        except AttributeError:
+            pass
+
+
+    # ────────────────────────────────────────────────────────────
+    # AI 控制台辅助方法（集中放置，与其他 on_xxx 方法风格一致）
+    # ────────────────────────────────────────────────────────────
+
+    def _save_ai_config(self):
+        """将 API Key 和模型名保存到 ai_config.json（明文，用户知情）"""
+        import json
+        api_key = self.qw_api_key_input.text().strip()
+        model = self.qw_model_combo.currentText()
+        if not api_key:
+            QMessageBox.warning(self, "提示", "API Key 为空，未保存")
+            return
+        try:
+            from src.config import Config
+            config_path = Config.get_ai_config_path()
+        except Exception:
+            config_path = Path(current_dir) / "ai_config.json"
+
+        data = {"api_key": api_key, "model": model}
+        try:
+            with open(config_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            QMessageBox.information(self, "成功", f"配置已保存到:\n{config_path}")
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"保存失败: {e}")
+
+    def _load_ai_config(self, silent: bool = False):
+        """从 ai_config.json 加载 API Key 和模型名"""
+        import json
+        try:
+            from src.config import Config
+            config_path = Config.get_ai_config_path()
+        except Exception:
+            config_path = Path(current_dir) / "ai_config.json"
+
+        if not config_path.exists():
+            if not silent:
+                QMessageBox.information(self, "提示", "未找到已保存的配置文件")
+            return
+
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            api_key = data.get("api_key", "")
+            model = data.get("model", "qwen-plus")
+            self.qw_api_key_input.setText(api_key)
+            idx = self.qw_model_combo.findText(model)
+            if idx >= 0:
+                self.qw_model_combo.setCurrentIndex(idx)
+            if not silent:
+                QMessageBox.information(self, "成功", "配置加载成功")
+        except Exception as e:
+            if not silent:
+                QMessageBox.critical(self, "错误", f"加载失败: {e}")
+
+    def _update_char_count(self):
+        """更新输入框字符计数标签"""
+        try:
+            count = len(self.qw_user_input.toPlainText())
+            self.qw_char_count_label.setText(f"{count} 字符")
+        except Exception:
+            pass
+
+    def _send_qianwen_message(self):
+        """
+        发送用户消息给千问 API。
+
+        流程：
+        1. 校验 API Key 和用户输入非空
+        2. 将用户消息追加到 _qianwen_history
+        3. 在 chat_display 显示用户消息
+        4. 启动 QianwenWorker（流式），接收 token_signal 更新显示
+        5. 在 finished 回调中将完整 AI 回复追加到 _qianwen_history
+        """
+        api_key = self.qw_api_key_input.text().strip()
+        if not api_key:
+            QMessageBox.warning(self, "提示", "请先输入 API Key")
+            return
+
+        user_text = self.qw_user_input.toPlainText().strip()
+        if not user_text:
+            return
+
+        model = self.qw_model_combo.currentText()
+
+        # 确保上一个 worker 已停止
+        if self._qianwen_worker and self._qianwen_worker.isRunning():
+            self._qianwen_worker.stop()
+            self._qianwen_worker.wait()
+
+        # 构建完整 messages（含 system prompt）
+        if not self._qianwen_history:
+            # 第一轮：插入 system 消息
+            self._qianwen_history.append({
+                "role": "system",
+                "content": QianwenWorker.SYSTEM_PROMPT
+            })
+
+        # 追加用户消息到历史
+        self._qianwen_history.append({"role": "user", "content": user_text})
+
+        # 在 chat_display 显示用户消息
+        self.qw_chat_display.append(f"\n[用户] {user_text}")
+        self.qw_chat_display.append("[千问] ")   # AI 回复的起始行，后续 token 追加
+
+        # 清空输入框
+        self.qw_user_input.clear()
+
+        # 锁定发送按钮，启用停止按钮
+        self.qw_send_btn.setEnabled(False)
+        self.qw_stop_btn.setEnabled(True)
+
+        # 用于在 on_qianwen_finished 中收集完整回复
+        self._current_ai_response = ""
+
+        # 创建并启动 Worker
+        try:
+            from src.config import Config
+            base_url = Config.QIANWEN_BASE_URL
+        except Exception:
+            base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+        self._qianwen_worker = QianwenWorker(
+            api_key=api_key,
+            model=model,
+            messages=list(self._qianwen_history),  # 传入快照，Worker 不修改原列表
+            base_url=base_url,
+        )
+        self._qianwen_worker.token_signal.connect(self._on_qianwen_token)
+        self._qianwen_worker.finished.connect(self._on_qianwen_finished)
+        self._qianwen_worker.error.connect(self._on_qianwen_error)
+        self._qianwen_worker.start()
+
+    def _on_qianwen_token(self, token: str):
+        """
+        接收流式 token，追加到 chat_display 当前行（不换行）。
+
+        使用 QTextCursor 移动到末尾后插入，避免 append() 自动换行。
+        """
+        try:
+            # 确保 token 是正确编码的字符串
+            if isinstance(token, bytes):
+                token = token.decode('utf-8', errors='replace')
+            elif not isinstance(token, str):
+                token = str(token)
+
+            self._current_ai_response += token
+            cursor = self.qw_chat_display.textCursor()
+            cursor.movePosition(QTextCursor.End)
+            cursor.insertText(token)
+            self.qw_chat_display.setTextCursor(cursor)
+            # 确保视图跟随滚动到最新内容
+            self.qw_chat_display.ensureCursorVisible()
+        except Exception:
+            pass
+
+    def _on_qianwen_finished(self):
+        """
+        对话完成回调：
+        1. 将完整 AI 回复追加到 _qianwen_history（用于下一轮上下文）
+        2. 解锁按钮
+        3. 在 chat_display 加一个空行分隔
+        4. 【新增】检测自动化测试触发标记
+        """
+        try:
+            # 将 AI 的完整回复存入历史
+            if self._current_ai_response:
+                self._qianwen_history.append({
+                    "role": "assistant",
+                    "content": self._current_ai_response
+                })
+
+            # 【新增】检测自动化测试触发标记
+            self._check_autotest_trigger(self._current_ai_response)
+
+            self._current_ai_response = ""
+            # 分隔线
+            self.qw_chat_display.append("")
+        except Exception:
+            pass
+        finally:
+            self.qw_send_btn.setEnabled(True)
+            self.qw_stop_btn.setEnabled(False)
+
+    def _on_qianwen_error(self, error_msg: str):
+        """API 调用错误回调：在 chat_display 显示错误提示"""
+        try:
+            # 安全处理错误消息中的编码问题
+            if isinstance(error_msg, bytes):
+                error_msg = error_msg.decode('utf-8', errors='replace')
+            elif not isinstance(error_msg, str):
+                error_msg = str(error_msg)
+
+            self.qw_chat_display.append(f"\n[错误] {error_msg}")
+            self.qw_chat_display.append("=" * 50)
+        except Exception:
+            pass
+        # 注意：finished 信号由 Worker 的 finally 块在 error 之后自动发出
+        # 不需要在此处重复解锁按钮
+
+    def _check_autotest_trigger(self, response: str):
+        """
+        【新增】解析 AI 回复中的自动测试触发标记。
+        若检测到 ##AUTOTEST##...##END## 标记，则自动启动渗透测试。
+        """
+        import json, re
+        if "##AUTOTEST##" not in response:
+            return
+
+        match = re.search(r'##AUTOTEST##(\{.+?\})##END##', response, re.DOTALL)
+        if not match:
+            return
+
+        try:
+            params = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            self.qw_chat_display.append("\n[AI执行] 参数解析失败，请重试")
+            return
+
+        host = params.get("host", "").strip()
+        if not host:
+            self.qw_chat_display.append("\n[AI执行] 缺少目标地址，无法执行")
+            return
+
+        self._start_autotest_from_ai(
+            host=host,
+            cmd=params.get("cmd", "whoami"),
+            do_port_scan=bool(params.get("do_port_scan", False)),
+            ports=params.get("ports", None),  # 【修复】传入端口列表
+            port_timeout=int(params.get("port_timeout", 2)),
+        )
+
+    def _start_autotest_from_ai(self, host: str, cmd: str = "whoami",
+                                 do_port_scan: bool = False, ports=None, port_timeout: int = 2):
+        """
+        【新增】由 AI 触发的渗透测试。
+        创建 AutoTestWorker，并将日志和结果输出到 AI 对话区。
+        """
+        # 防止并发运行
+        if hasattr(self, '_ai_test_worker') and self._ai_test_worker and self._ai_test_worker.isRunning():
+            self.qw_chat_display.append("\n[AI执行] 有测试正在进行，请等待完成后再试")
+            return
+
+        # 【修复】如果指定了端口列表，则自动开启扫描模式
+        if ports and isinstance(ports, list) and len(ports) > 0:
+            do_port_scan = True
+
+        # 在对话区显示启动提示
+        self.qw_chat_display.append(f"\n{'='*50}")
+        self.qw_chat_display.append(f"[AI执行] 开始渗透测试")
+        self.qw_chat_display.append(f"  目标: {host}")
+        if ports and isinstance(ports, list):
+            self.qw_chat_display.append(f"  指定端口: {ports}")
+        else:
+            self.qw_chat_display.append(f"  端口扫描: {'是' if do_port_scan else '否'}")
+        self.qw_chat_display.append(f"{'='*50}")
+
+        # 创建 AutoTestWorker 并连接到 AI 控制台的日志方法
+        self._ai_test_worker = AutoTestWorker(
+            url=host,
+            cmd=cmd,
+            fp_timeout=3,
+            send_timeout=10,
+            do_port_scan=do_port_scan,
+            ports=ports,  # 【修复】传入用户指定的端口列表
+            port_timeout=port_timeout,
+        )
+        self._ai_test_worker.log_signal.connect(self._on_ai_test_log)
+        self._ai_test_worker.detail_signal.connect(self._on_ai_test_detail)
+        self._ai_test_worker.finished.connect(self._on_ai_test_finished)
+        self._ai_test_worker.error.connect(self._on_ai_test_error)
+        self._ai_test_worker.start()
+
+    def _on_ai_test_log(self, msg: str):
+        """【新增】AutoTestWorker 日志 → AI 对话区"""
+        try:
+            cursor = self.qw_chat_display.textCursor()
+            cursor.movePosition(QTextCursor.End)
+            cursor.insertText(f"\n  {msg}")
+            self.qw_chat_display.setTextCursor(cursor)
+            self.qw_chat_display.ensureCursorVisible()
+        except Exception:
+            pass
+
+    def _on_ai_test_detail(self, detail: dict):
+        """【新增】单个 CVE 详情 → AI 对话区"""
+        try:
+            cve = detail.get("cve", "未知")
+            success = detail.get("success", False)
+            port = detail.get("success_port", "")
+            status = f"成功 (端口 {port})" if success else "未成功"
+            self.qw_chat_display.append(f"\n[CVE结果] {cve}: {status}")
+        except Exception:
+            pass
+
+    def _on_ai_test_finished(self, success_count: int, total_count: int):
+        """
+        【新增】测试完成 → 总结信息输出到 AI 对话区，
+        并自动让 AI 分析结果给出建议（不弹输入框）。
+        """
+        try:
+            self.qw_chat_display.append(f"\n{'='*50}")
+            self.qw_chat_display.append(f"[AI执行完成] 共测试 {total_count} 个CVE，{success_count} 个漏洞利用成功")
+            self.qw_chat_display.append(f"{'='*50}\n")
+
+            # 自动让 AI 分析测试结果并给出建议
+            result_summary = (
+                f"渗透测试已完成，共测试 {total_count} 个CVE漏洞，"
+                f"{success_count} 个利用成功。请根据测试结果给出安全建议。"
+            )
+            self._qianwen_history.append({"role": "user", "content": result_summary})
+            # 触发 AI 自动回复分析
+            self._trigger_ai_analysis()
+        except Exception:
+            pass
+
+    def _on_ai_test_error(self, err: str):
+        """【新增】测试错误 → AI 对话区"""
+        try:
+            self.qw_chat_display.append(f"\n[AI执行错误] {err}")
+        except Exception:
+            pass
+
+    def _trigger_ai_analysis(self):
+        """
+        【新增】测试完成后自动触发 AI 回复分析结果。
+        不弹输入框，直接调用 QianwenWorker 进行分析。
+        """
+        api_key = self.qw_api_key_input.text().strip()
+        if not api_key:
+            return
+        model = self.qw_model_combo.currentText()
+
+        # 添加系统分析提示（不弹对话框，直接开始 AI 响应）
+        self.qw_chat_display.append("[千问] ")
+        self._current_ai_response = ""
+        self.qw_send_btn.setEnabled(False)
+
+        try:
+            from src.config import Config
+            base_url = Config.QIANWEN_BASE_URL
+        except Exception:
+            base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+        self._qianwen_worker = QianwenWorker(
+            api_key=api_key,
+            model=model,
+            messages=list(self._qianwen_history),
+            base_url=base_url,
+        )
+        self._qianwen_worker.token_signal.connect(self._on_qianwen_token)
+        self._qianwen_worker.finished.connect(self._on_qianwen_finished)
+        self._qianwen_worker.error.connect(self._on_qianwen_error)
+        self._qianwen_worker.start()
+
+    def _stop_qianwen(self):
+        """停止当前流式输出"""
+        try:
+            if self._qianwen_worker and self._qianwen_worker.isRunning():
+                self._qianwen_worker.stop()
+                self.qw_chat_display.append("\n[已停止]")
+        except Exception:
+            pass
+
+    def _clear_qianwen_chat(self):
+        """清空对话历史和显示区域"""
+        reply = QMessageBox.question(
+            self, "确认", "确定要清空所有对话记录吗？",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply == QMessageBox.Yes:
+            self._qianwen_history = []
+            self._current_ai_response = ""
+            self.qw_chat_display.clear()
+            self.qw_chat_display.append("对话已清空，可重新开始。")
+
+    def eventFilter(self, obj, event):
+        """
+        全局事件过滤器：捕获 qw_user_input 的 Ctrl+Enter 快捷键发送消息。
+
+        注意：仅在 obj 是 qw_user_input 时拦截，其他控件的事件正常传递。
+        """
+        from PyQt5.QtCore import QEvent
+        from PyQt5.QtGui import QKeyEvent
+        try:
+            if (hasattr(self, 'qw_user_input') and
+                    obj is self.qw_user_input and
+                    event.type() == QEvent.KeyPress):
+                key_event = event  # 类型已是 QKeyEvent
+                if (key_event.key() == Qt.Key_Return and
+                        key_event.modifiers() == Qt.ControlModifier):
+                    self._send_qianwen_message()
+                    return True  # 拦截事件，不传递给 QTextEdit
+        except AttributeError:
+            # qw_user_input 尚未初始化（极端情况下的防御）
+            pass
+        return super().eventFilter(obj, event)
+
     def on_auto_test_finished(self, success_count, total_count):
         """自动化测试完成回调"""
         self.auto_test_btn.setEnabled(True)

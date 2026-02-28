@@ -62,7 +62,34 @@ class Config:
         """获取指纹映射文件的绝对路径"""
         return cls.PROJECT_ROOT / cls.FINGERPRINT_MAPPING_FILE
 
+    # ==================== 千问 AI 配置 ====================
+    # 阿里云千问兼容 OpenAI API 的 Base URL
+    QIANWEN_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+    # 支持的模型列表（用于 GUI 下拉框）
+    QIANWEN_MODELS = ["qwen-plus", "qwen-turbo", "qwen-max"]
+
+    # 默认模型
+    QIANWEN_DEFAULT_MODEL = "qwen-plus"
+
+    # 配置文件路径（相对项目根目录，保存用户的 API Key）
+    AI_CONFIG_FILE = "ai_config.json"
+
+    @classmethod
+    def get_ai_config_path(cls) -> Path:
+        """获取 AI 配置文件的绝对路径"""
+        return cls.PROJECT_ROOT / cls.AI_CONFIG_FILE
+
     @classmethod
     def is_llm_configured(cls) -> bool:
-        """检查LLM是否已配置（支持OpenAI或Anthropic）"""
-        return bool(cls.ANTHROPIC_API_KEY or cls.OPENAI_API_KEY or cls.LLM_API_KEY)
+        """检查千问 API 是否已配置"""
+        config_path = cls.get_ai_config_path()
+        if config_path.exists():
+            try:
+                import json
+                with open(config_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                return bool(data.get("api_key", "").strip())
+            except Exception:
+                pass
+        return False

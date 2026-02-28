@@ -6,6 +6,7 @@ from .generate_worker import GenerateWorker
 from .cssmd5_worker import CSSMD5Worker
 from .auto_test_worker import AutoTestWorker
 from .portscan_worker import PortScanWorker
+from .qianwen_worker import QianwenWorker
 
 __all__ = [
     'PayloadWorker',
@@ -13,4 +14,5 @@ __all__ = [
     'CSSMD5Worker',
     'AutoTestWorker',
     'PortScanWorker',
+    'QianwenWorker',
 ]
