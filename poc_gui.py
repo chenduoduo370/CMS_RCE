@@ -1897,26 +1897,29 @@ class MainWindow(QMainWindow):
         try:
             timestamp = __import__('datetime').datetime.now().strftime("%H:%M:%S")
 
+            # 简化长列表显示
+            display_message = self._simplify_message(message)
+
             # 根据类型添加前缀和颜色
             if log_type == "permission_pass":
                 prefix = "✓ [权限通过]"
-                colored_msg = f"<span style='color: green;'>{prefix} {timestamp}: {message}</span>"
+                colored_msg = f"<span style='color: green;'>{prefix} {timestamp}: {display_message}</span>"
             elif log_type == "permission_deny":
                 prefix = "✗ [权限拒绝]"
-                colored_msg = f"<span style='color: red;'>{prefix} {timestamp}: {message}</span>"
+                colored_msg = f"<span style='color: red;'>{prefix} {timestamp}: {display_message}</span>"
             elif log_type == "permission_check":
                 prefix = "🔍 [权限检查]"
-                colored_msg = f"<span style='color: blue;'>{prefix} {timestamp}: {message}</span>"
+                colored_msg = f"<span style='color: blue;'>{prefix} {timestamp}: {display_message}</span>"
             elif log_type == "call_info":
                 prefix = "ℹ [调用信息]"
-                colored_msg = f"<span style='color: blue;'>{prefix} {timestamp}: {message}</span>"
+                colored_msg = f"<span style='color: blue;'>{prefix} {timestamp}: {display_message}</span>"
             elif log_type == "call_result":
                 prefix = "📊 [调用结果]"
-                colored_msg = f"<span style='color: purple;'>{prefix} {timestamp}: {message}</span>"
+                colored_msg = f"<span style='color: purple;'>{prefix} {timestamp}: {display_message}</span>"
             else:
-                colored_msg = f"[{log_type}] {timestamp}: {message}"
+                colored_msg = f"[{log_type}] {timestamp}: {display_message}"
 
-            # 添加到日志列表
+            # 添加到日志列表（保存完整信息）
             self._ai_exec_log.append({
                 "timestamp": timestamp,
                 "type": log_type,
@@ -1929,8 +1932,37 @@ class MainWindow(QMainWindow):
             self.qw_exec_log_display.setTextCursor(cursor)
             self.qw_exec_log_display.insertHtml(f"\n{colored_msg}")
             self.qw_exec_log_display.ensureCursorVisible()
-        except Exception as e:
+        except Exception:
             pass  # 日志记录失败不影响主流程
+
+    def _simplify_message(self, message: str) -> str:
+        """
+        简化日志消息中的长列表显示。
+
+        例如：
+        - [1,2,3,...,100] → [...] (100项)
+        - ports=[1,2,3,...,100] → ports=[...] (100项)
+        """
+        import re
+
+        simplified = message
+
+        # 简化长数组：[1,2,3,...,100] → [...] (100项)
+        def replace_long_array(match):
+            array_str = match.group(0)
+            count = array_str.count(',') + 1
+            if count > 10:
+                return f"[...] ({count}项)"
+            return array_str
+
+        # 简化 ports 参数中的长数组
+        simplified = re.sub(r'\[\d+(?:,\s*\d+){10,}\]', replace_long_array, simplified)
+
+        # 如果消息太长（超过 150 字符），截断并添加省略号
+        if len(simplified) > 150:
+            simplified = simplified[:150] + "..."
+
+        return simplified
 
     def eventFilter(self, obj, event):
         """
