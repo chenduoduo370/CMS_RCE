@@ -1661,18 +1661,112 @@ class MainWindow(QMainWindow):
 
     def _check_autotest_trigger(self, response: str):
         """
-        【新增】解析 AI 回复中的自动测试触发标记。
-        若检测到 ##AUTOTEST##...##END## 标记，则自动启动渗透测试。
+        【新增】解析 AI 回复中的功能触发标记。
+        支持多个标记：
+        - ##PORTSCAN## — 仅端口扫描
+        - ##FINGERPRINT## — 仅资源指纹识别
+        - ##AUTOTEST## — 完整渗透测试
 
         【权限限制】
         AI 只能调用高级功能内的模块：
-        - 自动化测试（本方法调用的 AutoTestWorker，属于高级功能）
-          即：端口扫描 → 资源指纹识别 → CVE 匹配 → Payload 利用
+        - 端口扫描（PortScanWorker）
+        - 资源指纹识别（CSSMD5Worker）
+        - 自动化测试（AutoTestWorker）
         AI 不能直接调用其他功能或系统设置。
         """
         import json, re
-        if "##AUTOTEST##" not in response:
+
+        # 检测端口扫描标记
+        if "##PORTSCAN##" in response:
+            self._handle_portscan_trigger(response)
             return
+
+        # 检测资源指纹标记
+        if "##FINGERPRINT##" in response:
+            self._handle_fingerprint_trigger(response)
+            return
+
+        # 检测自动化测试标记
+        if "##AUTOTEST##" in response:
+            self._handle_autotest_trigger(response)
+            return
+
+    def _handle_portscan_trigger(self, response: str):
+        """处理端口扫描触发标记"""
+        import json, re
+
+        # 权限检查：检测到 ##PORTSCAN## 标记
+        self._log_ai_exec("permission_check", "检测到 ##PORTSCAN## 标记，开始权限验证")
+
+        match = re.search(r'##PORTSCAN##(\{.+?\})##END##', response, re.DOTALL)
+        if not match:
+            self._log_ai_exec("permission_deny", "标记格式错误，权限拒绝")
+            return
+
+        try:
+            params = json.loads(match.group(1))
+            self._log_ai_exec("call_info", f"解析参数成功: {self._simplify_message(json.dumps(params, ensure_ascii=False))}")
+        except json.JSONDecodeError:
+            self.qw_chat_display.append("\n[AI执行] 参数解析失败，请重试")
+            self._log_ai_exec("permission_deny", "JSON 解析失败，权限拒绝")
+            return
+
+        host = params.get("host", "").strip()
+        if not host:
+            self.qw_chat_display.append("\n[AI执行] 缺少目标地址，无法执行")
+            self._log_ai_exec("permission_deny", "缺少目标地址参数，权限拒绝")
+            return
+
+        # 权限通过：调用高级功能内的 PortScanWorker
+        self._log_ai_exec("permission_pass", "权限验证通过，调用 PortScanWorker（高级功能）")
+        self._log_ai_exec("call_info", f"调用模块: src.gui.workers.PortScanWorker")
+        self._log_ai_exec("call_info", f"调用参数: host={host}, ports={params.get('ports', None)}, timeout={params.get('timeout', 2)}")
+
+        self._start_portscan_from_ai(
+            host=host,
+            ports=params.get("ports", None),
+            timeout=float(params.get("timeout", 2)),
+        )
+
+    def _handle_fingerprint_trigger(self, response: str):
+        """处理资源指纹识别触发标记"""
+        import json, re
+
+        # 权限检查：检测到 ##FINGERPRINT## 标记
+        self._log_ai_exec("permission_check", "检测到 ##FINGERPRINT## 标记，开始权限验证")
+
+        match = re.search(r'##FINGERPRINT##(\{.+?\})##END##', response, re.DOTALL)
+        if not match:
+            self._log_ai_exec("permission_deny", "标记格式错误，权限拒绝")
+            return
+
+        try:
+            params = json.loads(match.group(1))
+            self._log_ai_exec("call_info", f"解析参数成功: {self._simplify_message(json.dumps(params, ensure_ascii=False))}")
+        except json.JSONDecodeError:
+            self.qw_chat_display.append("\n[AI执行] 参数解析失败，请重试")
+            self._log_ai_exec("permission_deny", "JSON 解析失败，权限拒绝")
+            return
+
+        host = params.get("host", "").strip()
+        if not host:
+            self.qw_chat_display.append("\n[AI执行] 缺少目标地址，无法执行")
+            self._log_ai_exec("permission_deny", "缺少目标地址参数，权限拒绝")
+            return
+
+        # 权限通过：调用高级功能内的 CSSMD5Worker
+        self._log_ai_exec("permission_pass", "权限验证通过，调用 CSSMD5Worker（高级功能）")
+        self._log_ai_exec("call_info", f"调用模块: src.gui.workers.CSSMD5Worker")
+        self._log_ai_exec("call_info", f"调用参数: host={host}, timeout={params.get('timeout', 3)}")
+
+        self._start_fingerprint_from_ai(
+            host=host,
+            timeout=float(params.get("timeout", 3)),
+        )
+
+    def _handle_autotest_trigger(self, response: str):
+        """处理自动化测试触发标记"""
+        import json, re
 
         # 权限检查：检测到 ##AUTOTEST## 标记
         self._log_ai_exec("permission_check", "检测到 ##AUTOTEST## 标记，开始权限验证")
@@ -1684,7 +1778,7 @@ class MainWindow(QMainWindow):
 
         try:
             params = json.loads(match.group(1))
-            self._log_ai_exec("call_info", f"解析参数成功: {json.dumps(params, ensure_ascii=False)}")
+            self._log_ai_exec("call_info", f"解析参数成功: {self._simplify_message(json.dumps(params, ensure_ascii=False))}")
         except json.JSONDecodeError:
             self.qw_chat_display.append("\n[AI执行] 参数解析失败，请重试")
             self._log_ai_exec("permission_deny", "JSON 解析失败，权限拒绝")
@@ -1705,9 +1799,128 @@ class MainWindow(QMainWindow):
             host=host,
             cmd=params.get("cmd", "whoami"),
             do_port_scan=bool(params.get("do_port_scan", False)),
-            ports=params.get("ports", None),  # 【修复】传入端口列表
+            ports=params.get("ports", None),
             port_timeout=int(params.get("port_timeout", 2)),
         )
+
+    def _start_portscan_from_ai(self, host: str, ports=None, timeout: float = 2.0):
+        """
+        【新增】由 AI 触发的端口扫描。
+        创建 PortScanWorker，并将结果输出到 AI 对话区。
+        """
+        # 防止并发运行
+        if hasattr(self, '_ai_portscan_worker') and self._ai_portscan_worker and self._ai_portscan_worker.isRunning():
+            self.qw_chat_display.append("\n[AI执行] 有扫描正在进行，请等待完成后再试")
+            self._log_ai_exec("permission_deny", "有扫描正在进行，拒绝新的请求")
+            return
+
+        # 在对话区显示启动提示
+        self.qw_chat_display.append(f"\n{'='*50}")
+        self.qw_chat_display.append(f"[AI执行] 开始端口扫描")
+        self.qw_chat_display.append(f"  目标: {host}")
+        if ports:
+            self.qw_chat_display.append(f"  指定端口: {ports}")
+        else:
+            self.qw_chat_display.append(f"  扫描模式: 常用端口")
+        self.qw_chat_display.append(f"{'='*50}")
+
+        # 记录执行日志
+        self._log_ai_exec("call_result", f"PortScanWorker 启动成功")
+        self._log_ai_exec("call_info", f"目标: {host}")
+        if ports:
+            self._log_ai_exec("call_info", f"指定端口: {ports}")
+        self._log_ai_exec("call_info", f"超时设置: {timeout}秒")
+
+        # 创建 PortScanWorker
+        self._ai_portscan_worker = PortScanWorker(
+            host=host,
+            ports=ports,
+            timeout=timeout,
+        )
+        self._ai_portscan_worker.finished.connect(self._on_ai_portscan_finished)
+        self._ai_portscan_worker.error.connect(self._on_ai_portscan_error)
+        self._ai_portscan_worker.start()
+
+    def _start_fingerprint_from_ai(self, host: str, timeout: float = 3.0):
+        """
+        【新增】由 AI 触发的资源指纹识别。
+        创建 CSSMD5Worker，并将结果输出到 AI 对话区。
+        """
+        # 防止并发运行
+        if hasattr(self, '_ai_fingerprint_worker') and self._ai_fingerprint_worker and self._ai_fingerprint_worker.isRunning():
+            self.qw_chat_display.append("\n[AI执行] 有指纹识别正在进行，请等待完成后再试")
+            self._log_ai_exec("permission_deny", "有指纹识别正在进行，拒绝新的请求")
+            return
+
+        # 在对话区显示启动提示
+        self.qw_chat_display.append(f"\n{'='*50}")
+        self.qw_chat_display.append(f"[AI执行] 开始资源指纹识别")
+        self.qw_chat_display.append(f"  目标: {host}")
+        self.qw_chat_display.append(f"{'='*50}")
+
+        # 记录执行日志
+        self._log_ai_exec("call_result", f"CSSMD5Worker 启动成功")
+        self._log_ai_exec("call_info", f"目标: {host}")
+        self._log_ai_exec("call_info", f"超时设置: {timeout}秒")
+
+        # 创建 CSSMD5Worker
+        self._ai_fingerprint_worker = CSSMD5Worker(
+            url=host,
+            timeout=timeout,
+        )
+        self._ai_fingerprint_worker.finished.connect(self._on_ai_fingerprint_finished)
+        self._ai_fingerprint_worker.error.connect(self._on_ai_fingerprint_error)
+        self._ai_fingerprint_worker.start()
+
+    def _on_ai_portscan_finished(self, results: dict):
+        """端口扫描完成回调"""
+        try:
+            self.qw_chat_display.append(f"\n{'='*50}")
+            self.qw_chat_display.append(f"[AI执行完成] 端口扫描完成")
+
+            open_ports = results.get("open_ports", [])
+            if open_ports:
+                self.qw_chat_display.append(f"发现开放端口: {open_ports}")
+            else:
+                self.qw_chat_display.append(f"未发现开放端口")
+
+            self.qw_chat_display.append(f"{'='*50}\n")
+            self._log_ai_exec("call_result", f"端口扫描完成，发现 {len(open_ports)} 个开放端口")
+        except Exception:
+            pass
+
+    def _on_ai_fingerprint_finished(self, results: dict):
+        """资源指纹识别完成回调"""
+        try:
+            self.qw_chat_display.append(f"\n{'='*50}")
+            self.qw_chat_display.append(f"[AI执行完成] 资源指纹识别完成")
+
+            fingerprints = results.get("fingerprints", {})
+            if fingerprints:
+                self.qw_chat_display.append(f"识别到 {len(fingerprints)} 个资源")
+            else:
+                self.qw_chat_display.append(f"未识别到任何资源")
+
+            self.qw_chat_display.append(f"{'='*50}\n")
+            self._log_ai_exec("call_result", f"指纹识别完成，识别到 {len(fingerprints)} 个资源")
+        except Exception:
+            pass
+
+    def _on_ai_portscan_error(self, err: str):
+        """端口扫描错误回调"""
+        try:
+            self.qw_chat_display.append(f"\n[AI执行错误] {err}")
+            self._log_ai_exec("permission_deny", f"端口扫描错误: {err}")
+        except Exception:
+            pass
+
+    def _on_ai_fingerprint_error(self, err: str):
+        """资源指纹识别错误回调"""
+        try:
+            self.qw_chat_display.append(f"\n[AI执行错误] {err}")
+            self._log_ai_exec("permission_deny", f"指纹识别错误: {err}")
+        except Exception:
+            pass
 
     def _start_autotest_from_ai(self, host: str, cmd: str = "whoami",
                                  do_port_scan: bool = False, ports=None, port_timeout: int = 2):
