@@ -1,7 +1,30 @@
 # -*- coding: utf-8 -*-
 """
 千问 AI Worker - 流式对话工作线程
-基于 PyQt5 QThread，通过 OpenAI Compatible API 调用阿里云千问大模型
+===============================
+
+基于 PyQt5 QThread，通过 OpenAI Compatible API 调用阿里云千问大模型。
+
+功能：
+  - 流式对话：逐 token 接收 AI 回复，即时更新 UI
+  - 多轮对话：维护完整的对话历史，支持上下文
+  - 参数收集：引导用户收集渗透测试参数（目标、端口等）
+  - 触发执行：生成特殊标记让 GUI 执行底层渗透测试模块
+
+使用示例：
+    worker = QianwenWorker(
+        api_key="sk-xxx",
+        model="qwen-plus",
+        messages=[{"role": "system", "content": SYSTEM_PROMPT},
+                 {"role": "user", "content": "帮我测试 192.168.1.1"}]
+    )
+    worker.token_signal.connect(on_token)
+    worker.finished.connect(on_finished)
+    worker.start()
+
+依赖：
+  - openai >= 1.0.0
+  - PyQt5 >= 5.15.0
 """
 
 import os

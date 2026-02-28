@@ -1691,116 +1691,112 @@ class MainWindow(QMainWindow):
             self._handle_autotest_trigger(response)
             return
 
-    def _handle_portscan_trigger(self, response: str):
-        """处理端口扫描触发标记"""
+    def _parse_trigger_params(self, response: str, trigger_name: str,
+                                pattern: str) -> tuple:
+        """
+        解析 AI 回复中的触发标记参数（公共方法）。
+
+        Args:
+            response: AI 完整回复
+            trigger_name: 触发器名称（如 "##PORTSCAN##"）
+            pattern: 正则匹配模式
+
+        Returns:
+            tuple: (params_dict, error_message)
+            - params_dict: 解析成功的参数字典
+            - error_message: 错误时返回错误信息，成功时返回 None
+        """
         import json, re
 
-        # 权限检查：检测到 ##PORTSCAN## 标记
-        self._log_ai_exec("permission_check", "检测到 ##PORTSCAN## 标记，开始权限验证")
+        # 权限检查
+        self._log_ai_exec("permission_check", f"检测到 {trigger_name} 标记，开始权限验证")
 
-        match = re.search(r'##PORTSCAN##(\{.+?\})##END##', response, re.DOTALL)
+        # 匹配标记
+        match = re.search(pattern, response, re.DOTALL)
         if not match:
             self._log_ai_exec("permission_deny", "标记格式错误，权限拒绝")
-            return
+            return None, "标记格式错误"
 
+        # 解析 JSON
         try:
             params = json.loads(match.group(1))
             self._log_ai_exec("call_info", f"解析参数成功: {self._simplify_message(json.dumps(params, ensure_ascii=False))}")
         except json.JSONDecodeError:
             self.qw_chat_display.append("\n[AI执行] 参数解析失败，请重试")
             self._log_ai_exec("permission_deny", "JSON 解析失败，权限拒绝")
-            return
+            return None, "JSON 解析失败"
 
+        # 验证必填参数 host
         host = params.get("host", "").strip()
         if not host:
             self.qw_chat_display.append("\n[AI执行] 缺少目标地址，无法执行")
             self._log_ai_exec("permission_deny", "缺少目标地址参数，权限拒绝")
+            return None, "缺少 host 参数"
+
+        return params, None
+
+    def _handle_portscan_trigger(self, response: str):
+        """处理端口扫描触发标记"""
+        params, error = self._parse_trigger_params(
+            response, "##PORTSCAN##",
+            r'##PORTSCAN##(\{.+?\})##END##'
+        )
+        if error:
             return
 
-        # 权限通过：调用高级功能内的 PortScanWorker
-        self._log_ai_exec("permission_pass", "权限验证通过，调用 PortScanWorker（高级功能）")
-        self._log_ai_exec("call_info", f"调用模块: src.gui.workers.PortScanWorker")
-        self._log_ai_exec("call_info", f"调用参数: host={host}, ports={params.get('ports', None)}, timeout={params.get('timeout', 2)}")
+        host = params.get("host", "").strip()
+        ports = params.get("ports", None)
+        timeout = float(params.get("timeout", 2))
 
-        self._start_portscan_from_ai(
-            host=host,
-            ports=params.get("ports", None),
-            timeout=float(params.get("timeout", 2)),
-        )
+        # 权限通过
+        self._log_ai_exec("permission_pass", "权限验证通过，调用 PortScanWorker（高级功能）")
+        self._log_ai_exec("call_info", "调用模块: src.gui.workers.PortScanWorker")
+        self._log_ai_exec("call_info", f"调用参数: host={host}, ports={ports}, timeout={timeout}")
+
+        self._start_portscan_from_ai(host=host, ports=ports, timeout=timeout)
 
     def _handle_fingerprint_trigger(self, response: str):
         """处理资源指纹识别触发标记"""
-        import json, re
-
-        # 权限检查：检测到 ##FINGERPRINT## 标记
-        self._log_ai_exec("permission_check", "检测到 ##FINGERPRINT## 标记，开始权限验证")
-
-        match = re.search(r'##FINGERPRINT##(\{.+?\})##END##', response, re.DOTALL)
-        if not match:
-            self._log_ai_exec("permission_deny", "标记格式错误，权限拒绝")
-            return
-
-        try:
-            params = json.loads(match.group(1))
-            self._log_ai_exec("call_info", f"解析参数成功: {self._simplify_message(json.dumps(params, ensure_ascii=False))}")
-        except json.JSONDecodeError:
-            self.qw_chat_display.append("\n[AI执行] 参数解析失败，请重试")
-            self._log_ai_exec("permission_deny", "JSON 解析失败，权限拒绝")
+        params, error = self._parse_trigger_params(
+            response, "##FINGERPRINT##",
+            r'##FINGERPRINT##(\{.+?\})##END##'
+        )
+        if error:
             return
 
         host = params.get("host", "").strip()
-        if not host:
-            self.qw_chat_display.append("\n[AI执行] 缺少目标地址，无法执行")
-            self._log_ai_exec("permission_deny", "缺少目标地址参数，权限拒绝")
-            return
+        timeout = float(params.get("timeout", 3))
 
-        # 权限通过：调用高级功能内的 CSSMD5Worker
+        # 权限通过
         self._log_ai_exec("permission_pass", "权限验证通过，调用 CSSMD5Worker（高级功能）")
-        self._log_ai_exec("call_info", f"调用模块: src.gui.workers.CSSMD5Worker")
-        self._log_ai_exec("call_info", f"调用参数: host={host}, timeout={params.get('timeout', 3)}")
+        self._log_ai_exec("call_info", "调用模块: src.gui.workers.CSSMD5Worker")
+        self._log_ai_exec("call_info", f"调用参数: host={host}, timeout={timeout}")
 
-        self._start_fingerprint_from_ai(
-            host=host,
-            timeout=float(params.get("timeout", 3)),
-        )
+        self._start_fingerprint_from_ai(host=host, timeout=timeout)
 
     def _handle_autotest_trigger(self, response: str):
         """处理自动化测试触发标记"""
-        import json, re
-
-        # 权限检查：检测到 ##AUTOTEST## 标记
-        self._log_ai_exec("permission_check", "检测到 ##AUTOTEST## 标记，开始权限验证")
-
-        match = re.search(r'##AUTOTEST##(\{.+?\})##END##', response, re.DOTALL)
-        if not match:
-            self._log_ai_exec("permission_deny", "标记格式错误，权限拒绝")
-            return
-
-        try:
-            params = json.loads(match.group(1))
-            self._log_ai_exec("call_info", f"解析参数成功: {self._simplify_message(json.dumps(params, ensure_ascii=False))}")
-        except json.JSONDecodeError:
-            self.qw_chat_display.append("\n[AI执行] 参数解析失败，请重试")
-            self._log_ai_exec("permission_deny", "JSON 解析失败，权限拒绝")
+        params, error = self._parse_trigger_params(
+            response, "##AUTOTEST##",
+            r'##AUTOTEST##(\{.+?\})##END##'
+        )
+        if error:
             return
 
         host = params.get("host", "").strip()
-        if not host:
-            self.qw_chat_display.append("\n[AI执行] 缺少目标地址，无法执行")
-            self._log_ai_exec("permission_deny", "缺少目标地址参数，权限拒绝")
-            return
+        cmd = params.get("cmd", "whoami")
+        do_port_scan = bool(params.get("do_port_scan", False))
+        ports = params.get("ports", None)
+        port_timeout = int(params.get("port_timeout", 2))
 
-        # 权限通过：调用高级功能内的 AutoTestWorker
+        # 权限通过
         self._log_ai_exec("permission_pass", "权限验证通过，调用 AutoTestWorker（高级功能）")
-        self._log_ai_exec("call_info", f"调用模块: src.gui.workers.AutoTestWorker")
-        self._log_ai_exec("call_info", f"调用参数: host={host}, cmd={params.get('cmd', 'whoami')}, do_port_scan={params.get('do_port_scan', False)}, ports={params.get('ports', None)}")
+        self._log_ai_exec("call_info", "调用模块: src.gui.workers.AutoTestWorker")
+        self._log_ai_exec("call_info", f"调用参数: host={host}, cmd={cmd}, do_port_scan={do_port_scan}, ports={ports}")
 
         self._start_autotest_from_ai(
-            host=host,
-            cmd=params.get("cmd", "whoami"),
-            do_port_scan=bool(params.get("do_port_scan", False)),
-            ports=params.get("ports", None),
-            port_timeout=int(params.get("port_timeout", 2)),
+            host=host, cmd=cmd, do_port_scan=do_port_scan,
+            ports=ports, port_timeout=port_timeout
         )
 
     def _start_portscan_from_ai(self, host: str, ports=None, timeout: float = 2.0):
