@@ -1623,6 +1623,12 @@ class MainWindow(QMainWindow):
         """
         【新增】解析 AI 回复中的自动测试触发标记。
         若检测到 ##AUTOTEST##...##END## 标记，则自动启动渗透测试。
+
+        【权限限制】
+        AI 只能调用高级功能内的模块：
+        - 自动化测试（本方法调用的 AutoTestWorker，属于高级功能）
+          即：端口扫描 → 资源指纹识别 → CVE 匹配 → Payload 利用
+        AI 不能直接调用其他功能或系统设置。
         """
         import json, re
         if "##AUTOTEST##" not in response:
