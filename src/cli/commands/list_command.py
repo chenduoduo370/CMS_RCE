@@ -18,8 +18,8 @@ class ListCommand(BaseCommand):
         """执行list命令"""
         try:
             # 导入PayloadManager
-            sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-            from payload_sender import PayloadManager
+            sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+            from src.core.payload_sender import PayloadManager
 
             manager = PayloadManager(debug=False)
             payloads = manager.list_payloads()

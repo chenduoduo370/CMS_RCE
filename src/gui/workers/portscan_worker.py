@@ -23,7 +23,7 @@ class PortScanWorker(QThread):
 
     def run(self):
         try:
-            from port_scanner import scan_ports
+            from src.core.port_scanner import scan_ports
 
             if scan_ports is None:
                 self.error.emit("端口扫描模块未加载")

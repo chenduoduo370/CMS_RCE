@@ -54,9 +54,9 @@ class AutoTestWorker(QThread):
         total_cves = 0
         try:
             from urllib.parse import urlparse
-            from fingerprint import get_css_files_md5_from_page
-            from payload_sender import PayloadManager
-            from port_scanner import scan_ports
+            from src.core.fingerprint import get_css_files_md5_from_page
+            from src.core.payload_sender import PayloadManager
+            from src.core.port_scanner import scan_ports
 
             # 简洁模式只显示关键信息
             self._log("=" * 60, force=True)

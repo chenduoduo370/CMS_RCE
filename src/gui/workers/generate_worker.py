@@ -23,7 +23,7 @@ class GenerateWorker(QThread):
 
     def run(self):
         try:
-            from packet_generator import generate_from_packet
+            from src.core.packet_generator import generate_from_packet
 
             result = generate_from_packet(
                 packet=self.packet,

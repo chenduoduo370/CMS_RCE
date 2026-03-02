@@ -21,7 +21,7 @@ class CSSMD5Worker(QThread):
 
     def run(self):
         try:
-            from fingerprint import get_css_files_md5_from_page
+            from src.core.fingerprint import get_css_files_md5_from_page
 
             if get_css_files_md5_from_page is None:
                 self.error.emit("CSS MD5功能未加载")
