@@ -22,8 +22,8 @@ class ShowCommand(BaseCommand):
         """执行show命令"""
         try:
             # 导入PayloadManager
-            sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-            from payload_sender import PayloadManager
+            sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+            from src.core.payload_sender import PayloadManager
 
             manager = PayloadManager(debug=args.debug)
             cmd = ' '.join(args.cmd)

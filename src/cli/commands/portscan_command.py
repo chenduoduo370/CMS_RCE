@@ -22,8 +22,8 @@ class PortscanCommand(BaseCommand):
         """执行portscan命令"""
         try:
             # 导入端口扫描模块
-            sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-            from port_scanner import scan_ports, scan_common_ports, COMMON_PORTS
+            sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+            from src.core.port_scanner import scan_ports, scan_common_ports, COMMON_PORTS
 
             host = args.host
             timeout = args.timeout

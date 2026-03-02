@@ -19,8 +19,8 @@ class FingerprintCommand(BaseCommand):
         """执行fingerprint命令"""
         try:
             # 导入指纹识别模块
-            sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-            from fingerprint import get_css_files_md5_from_page
+            sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+            from src.core.fingerprint import get_css_files_md5_from_page
 
             url = args.url
             timeout = args.timeout

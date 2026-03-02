@@ -22,9 +22,9 @@ class AutoCommand(BaseCommand):
         """执行auto命令"""
         try:
             # 导入必要的模块
-            sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-            from fingerprint import get_css_files_md5_from_page
-            from payload_sender import PayloadManager
+            sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+            from src.core.fingerprint import get_css_files_md5_from_page
+            from src.core.payload_sender import PayloadManager
 
             url = args.url
             cmd = args.cmd

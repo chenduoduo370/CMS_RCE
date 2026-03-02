@@ -39,18 +39,18 @@ except ImportError:
     sys.exit(1)
 
 # 导入核心模块（已拆分）
-from payload_sender import PayloadManager, list_payloads
-from packet_generator import generate_from_packet, read_packet_file
+from src.core.payload_sender import PayloadManager, list_payloads
+from src.core.packet_generator import generate_from_packet, read_packet_file
 try:
     # 端口扫描功能
-    from port_scanner import scan_ports, format_scan_result
+    from src.core.port_scanner import scan_ports, format_scan_result
 except ImportError:
     scan_ports = None
     format_scan_result = None
 
 try:
     # 指纹识别功能（支持多种资源类型）
-    from fingerprint import (
+    from src.core.fingerprint import (
         get_file_md5,
         get_css_files_md5_from_page,  # 向后兼容
         get_resources_fingerprint_from_page,  # 新的多资源指纹识别
@@ -64,7 +64,7 @@ except ImportError:
 
 try:
     # 指纹-CVE映射管理
-    from fingerprint_cve_mapping import get_manager, FingerprintCVEMapping, FingerprintCVEManager
+    from src.core.fingerprint_cve_mapping import get_manager, FingerprintCVEMapping, FingerprintCVEManager
 except ImportError:
     get_manager = None
     FingerprintCVEMapping = None

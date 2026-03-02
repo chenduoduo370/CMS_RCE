@@ -22,8 +22,8 @@ class GenerateCommand(BaseCommand):
         """执行generate命令"""
         try:
             # 导入必要的模块
-            sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-            from packet_generator import generate_from_packet, read_packet_file
+            sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+            from src.core.packet_generator import generate_from_packet, read_packet_file
 
             # 读取数据包
             if args.packet:
