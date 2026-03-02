@@ -26,7 +26,8 @@ except ImportError:
     extract_path_from_url = None  # type: ignore
 
 
-current_dir = os.path.dirname(os.path.abspath(__file__))
+# 获取项目根目录（从 src/core/ 向上两级）
+current_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def _escape_body_for_python_string(body: str) -> str:

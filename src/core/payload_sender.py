@@ -19,8 +19,8 @@ from typing import Optional
 import requests
 
 
-# 保持与原 poc_tool.py 中一致的目录获取方式
-current_dir = os.path.dirname(os.path.abspath(__file__))
+# 获取项目根目录（从 src/core/ 向上两级）
+current_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 class PayloadManager:
