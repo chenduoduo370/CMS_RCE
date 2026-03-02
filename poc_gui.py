@@ -80,6 +80,9 @@ from src.gui.workers import (
     QianwenWorker
 )
 
+# 导入 AI 模块
+from src.ai import AIManager
+
 
 def build_fingerprint_tab(manager: 'FingerprintCVEManager'):
     """构建独立的指纹-CVE映射标签页（模块化，避免类方法依赖问题）"""
