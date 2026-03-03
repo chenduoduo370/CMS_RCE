@@ -994,8 +994,8 @@ class MainWindow(QMainWindow):
         self.css_result_text.clear()
         self.css_result_text.append("正在访问页面并提取静态资源（CSS、JS等）...\n")
 
-        # 创建工作线程，支持CSS和JS
-        self.css_worker = CSSMD5Worker(page_url, timeout, resource_types=['css', 'js'])
+        # 创建工作线程
+        self.css_worker = CSSMD5Worker(page_url, timeout)
         self.css_worker.finished.connect(self.on_css_md5_finished)
         self.css_worker.error.connect(self.on_css_md5_error)
         self.css_worker.start()
@@ -1971,14 +1971,111 @@ class MainWindow(QMainWindow):
 
         self._execute_cli_command(cli_cmd, callback_finished=on_finished)
 
+    def _start_autotest_from_ai(self, host: str, cmd: str, do_port_scan: bool,
+                                 ports: list = None, port_timeout: int = 2):
+        """
+        由 AI 触发的自动化渗透测试，直接使用 AutoTestWorker。
+
+        与常规自动化测试不同：
+        - 日志输出到 AI 对话区（而不是自动化测试标签页）
+        - 完成后自动触发 AI 分析结果
+        - 支持权限检查和权限日志记录
+        """
+        # 防止并发运行
+        if hasattr(self, '_ai_autotest_worker') and self._ai_autotest_worker and self._ai_autotest_worker.isRunning():
+            self.qw_chat_display.append("\n[AI执行] 有自动化测试正在进行，请等待完成后再试")
+            self._log_ai_exec("permission_deny", "有自动化测试正在进行，拒绝新的请求")
+            return
+
+        # 在对话区显示启动提示
+        self.qw_chat_display.append(f"\n{'='*50}")
+        self.qw_chat_display.append(f"[AI执行] 开始自动化渗透测试")
+        self.qw_chat_display.append(f"  目标: {host}")
+        self.qw_chat_display.append(f"  命令: {cmd}")
+        self.qw_chat_display.append(f"  端口扫描: {'是' if do_port_scan else '否'}")
+        if ports:
+            self.qw_chat_display.append(f"  指定端口: {ports}")
+        self.qw_chat_display.append(f"{'='*50}")
+
+        # 记录执行日志
+        self._log_ai_exec("call_result", "AutoTestWorker 启动成功")
+        self._log_ai_exec("call_info", f"目标: {host}, 命令: {cmd}, 端口扫描: {do_port_scan}")
+        if ports:
+            self._log_ai_exec("call_info", f"指定端口: {ports}")
+
+        # 使用与常规自动化测试相同的默认超时参数
+        fp_timeout = 3.0
+        send_timeout = 10.0
+
+        # 创建 AutoTestWorker
+        self._ai_autotest_worker = AutoTestWorker(
+            host, cmd, fp_timeout, send_timeout,
+            do_port_scan=do_port_scan,
+            ports=ports,
+            port_timeout=port_timeout,
+            verbose=False
+        )
+
+        # 连接信号到 AI 版本的回调方法
+        self._ai_autotest_worker.log_signal.connect(self._on_ai_test_log)
+        self._ai_autotest_worker.detail_signal.connect(self._on_ai_test_detail)
+        self._ai_autotest_worker.finished.connect(self._on_ai_test_finished)
+        self._ai_autotest_worker.error.connect(self._on_ai_test_error)
+
+        # 启动工作线程
+        self._ai_autotest_worker.start()
+
+    def _on_ai_test_log(self, msg: str):
+        """自动化测试日志回调（AI 版本）- 显示到 AI 对话区"""
+        self.qw_chat_display.append(msg)
+        # 滚动到底部
+        cursor = self.qw_chat_display.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        self.qw_chat_display.setTextCursor(cursor)
+
+    def _on_ai_test_detail(self, detail):
+        """收到单个 CVE 的执行详情（AI 版本）"""
+        # 此版本暂不显示详情表格，仅用于后端记录
+        pass
+
+    def _on_ai_test_finished(self, success_count: int, total_count: int):
+        """自动化测试完成回调（AI 版本）"""
+        self.qw_chat_display.append(f"\n{'='*50}")
+        self.qw_chat_display.append(f"[AI执行完成] 自动化渗透测试完成")
+        self.qw_chat_display.append(f"  成功执行: {success_count}/{total_count}")
+        self.qw_chat_display.append(f"{'='*50}")
+
+        # 记录执行日志
+        self._log_ai_exec("call_result", f"自动化测试完成: {success_count}/{total_count} 成功")
+
+        # 延迟触发 AI 分析结果（避免竞态条件）
+        # 使用 QTimer 延迟 200ms 让 GUI 有时间更新
+        try:
+            QTimer.singleShot(200, self._trigger_ai_analysis)
+        except Exception:
+            # 降级：直接调用（如果 QTimer 失败）
+            self._trigger_ai_analysis()
+
+    def _on_ai_test_error(self, error_msg: str):
+        """自动化测试错误回调（AI 版本）"""
+        self.qw_chat_display.append(f"\n[AI执行] 错误: {error_msg}")
+        self._log_ai_exec("permission_deny", f"自动化测试错误: {error_msg}")
+
     def _trigger_ai_analysis(self):
         """
         【新增】测试完成后自动触发 AI 回复分析结果。
         不弹输入框，直接调用 QianwenWorker 进行分析。
         """
+        # 检查是否已有 QianwenWorker 在运行
+        if hasattr(self, '_qianwen_worker') and self._qianwen_worker and self._qianwen_worker.isRunning():
+            self._log_ai_exec("permission_deny", "前一个 AI 响应还在处理中，跳过自动分析")
+            return
+
         api_key = self.qw_api_key_input.text().strip()
         if not api_key:
+            self._log_ai_exec("permission_deny", "未配置 API Key，无法进行自动分析")
             return
+
         model = self.qw_model_combo.currentText()
 
         # 添加系统分析提示（不弹对话框，直接开始 AI 响应）
@@ -1992,16 +2089,24 @@ class MainWindow(QMainWindow):
         except Exception:
             base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
-        self._qianwen_worker = QianwenWorker(
-            api_key=api_key,
-            model=model,
-            messages=list(self._qianwen_history),
-            base_url=base_url,
-        )
-        self._qianwen_worker.token_signal.connect(self._on_qianwen_token)
-        self._qianwen_worker.finished.connect(self._on_qianwen_finished)
-        self._qianwen_worker.error.connect(self._on_qianwen_error)
-        self._qianwen_worker.start()
+        # 记录执行日志
+        self._log_ai_exec("call_info", f"启动自动分析 (模型: {model})")
+
+        try:
+            self._qianwen_worker = QianwenWorker(
+                api_key=api_key,
+                model=model,
+                messages=list(self._qianwen_history),
+                base_url=base_url,
+            )
+            self._qianwen_worker.token_signal.connect(self._on_qianwen_token)
+            self._qianwen_worker.finished.connect(self._on_qianwen_finished)
+            self._qianwen_worker.error.connect(self._on_qianwen_error)
+            self._qianwen_worker.start()
+            self._log_ai_exec("call_result", "自动分析已启动")
+        except Exception as e:
+            self._log_ai_exec("permission_deny", f"启动自动分析失败: {e}")
+            self.qw_send_btn.setEnabled(True)
 
     def _stop_qianwen(self):
         """停止当前流式输出"""

@@ -95,15 +95,21 @@ class AutoTestWorker(QThread):
                     base_host = self.url
                     provided_port = None
 
-            # 进行端口扫描（若启用），否则使用提供的端口或默认80
+            # 进行端口扫描（若启用），否则使用指定的端口或默认80
+            # 确定待扫描的端口列表
             ports_to_scan = [provided_port] if provided_port else [80]
+
+            # 如果用户指定了端口列表，则优先使用用户指定的端口
+            if self.ports:
+                ports_to_scan = self.ports
+
             open_ports = []
             if self.do_port_scan and scan_ports is not None:
                 try:
                     self._log(f"    [+] 扫描目标: {base_host}")
                     scan_results = scan_ports(
                         base_host,
-                        self.ports,
+                        ports_to_scan,  # 扫描 ports_to_scan（用户指定的或默认的）
                         timeout=self.port_timeout,
                         log_callback=lambda msg: self._log(msg),
                         stop_flag=self._check_stop
@@ -112,12 +118,14 @@ class AutoTestWorker(QThread):
                     if open_ports:
                         self._log(f"    [+] 发现开放端口: {', '.join(str(p) for p in open_ports)}", force=True)
                     else:
-                        self._log("    [-] 未发现开放端口，使用提供端口或默认 80", force=True)
+                        # 如果扫描未发现开放端口，则使用指定的所有端口进行后续检测
+                        self._log(f"    [-] 未发现开放端口，使用指定端口: {', '.join(str(p) for p in ports_to_scan)}", force=True)
                         open_ports = ports_to_scan
                 except Exception as e:
                     self._log(f"[!] 端口扫描出错: {e}", force=True)
                     open_ports = ports_to_scan
             else:
+                # 不进行端口扫描，直接使用指定的端口或默认端口
                 open_ports = ports_to_scan
 
             # 对每个开放端口做指纹识别，收集匹配到的 CVE（按端口映射）
