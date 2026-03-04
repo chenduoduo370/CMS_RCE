@@ -83,6 +83,9 @@ from src.gui.workers import (
 # 导入 AI 模块
 from src.ai import AIManager
 
+# 导入 UI 辅助工具
+from src.gui.ui_helper import UIHelper
+
 
 def build_fingerprint_tab(manager: 'FingerprintCVEManager'):
     """构建独立的指纹-CVE映射标签页（模块化，避免类方法依赖问题）"""
@@ -149,42 +152,41 @@ def build_fingerprint_tab(manager: 'FingerprintCVEManager'):
         cve = fp_cve_input.text().strip() or None
         desc = fp_description_input.text().strip() or None
         if not fp:
-            QMessageBox.warning(widget, "警告", "请输入指纹")
+            UIHelper.show_warning(widget, "警告", "请输入指纹")
             return
         try:
             ok = manager.add_mapping(fp, cve, desc)
             if ok:
-                QMessageBox.information(widget, "成功", f"成功添加映射: {fp} -> {cve or '(无CVE)'}")
+                UIHelper.show_info(widget, "成功", f"成功添加映射: {fp} -> {cve or '(无CVE)'}")
                 fp_fingerprint_input.clear()
                 fp_cve_input.clear()
                 fp_description_input.clear()
                 refresh_list()
             else:
-                QMessageBox.warning(widget, "失败", "添加映射失败")
+                UIHelper.show_warning(widget, "失败", "添加映射失败")
         except Exception as e:
-            QMessageBox.critical(widget, "错误", f"添加失败: {e}")
+            UIHelper.show_error(widget, "错误", f"添加失败: {e}")
 
     def remove_mapping_cb():
         current = fp_list_widget.currentItem()
         if not current:
-            QMessageBox.warning(widget, "警告", "请先选择要删除的映射")
+            UIHelper.show_warning(widget, "警告", "请先选择要删除的映射")
             return
         text = current.text()
         if "指纹:" in text:
             fingerprint = text.split("指纹:")[1].split("\n")[0].strip()
         else:
-            QMessageBox.warning(widget, "警告", "无法解析指纹信息")
+            UIHelper.show_warning(widget, "警告", "无法解析指纹信息")
             return
-        reply = QMessageBox.question(widget, "确认", f"确定要删除指纹 {fingerprint} 的映射吗？", QMessageBox.Yes | QMessageBox.No)
-        if reply == QMessageBox.Yes:
+        if UIHelper.show_question(widget, "确认", f"确定要删除指纹 {fingerprint} 的映射吗？"):
             try:
                 if manager.remove_mapping(fingerprint):
-                    QMessageBox.information(widget, "成功", "删除成功")
+                    UIHelper.show_info(widget, "成功", "删除成功")
                     refresh_list()
                 else:
-                    QMessageBox.warning(widget, "失败", "删除失败")
+                    UIHelper.show_warning(widget, "失败", "删除失败")
             except Exception as e:
-                QMessageBox.critical(widget, "错误", f"删除失败: {e}")
+                UIHelper.show_error(widget, "错误", f"删除失败: {e}")
 
     fp_add_btn.clicked.connect(add_mapping_cb)
     fp_remove_btn.clicked.connect(remove_mapping_cb)
@@ -496,102 +498,58 @@ class MainWindow(QMainWindow):
         """创建 Payload 操作标签页"""
         widget = QWidget()
         layout = QVBoxLayout()
-        
+
         # 输入区域
-        input_group = QGroupBox("参数设置")
-        input_layout = QFormLayout()
-        
+        input_layout = UIHelper.create_form_layout()
+
         # Payload 模块选择
-        self.module_combo = QComboBox()
-        self.module_combo.setEditable(False)  # 只允许从列表中选择，不允许手动输入
+        self.module_combo = UIHelper.create_combo_box()
         self.module_combo.setMinimumWidth(300)
         self.refresh_payload_list()
         input_layout.addRow("Payload 模块:", self.module_combo)
-        
+
         # 目标地址
-        self.ip_port_input = QLineEdit()
-        self.ip_port_input.setPlaceholderText("例如: 192.168.1.1:80")
+        self.ip_port_input = UIHelper.create_line_edit("例如: 192.168.1.1:80")
         input_layout.addRow("目标地址:", self.ip_port_input)
-        
+
         # 命令
-        self.cmd_input = QLineEdit()
-        self.cmd_input.setPlaceholderText("例如: id 或 whoami")
+        self.cmd_input = UIHelper.create_line_edit("例如: id 或 whoami")
         input_layout.addRow("执行命令:", self.cmd_input)
-        
+
         # 超时时间
-        self.timeout_spin = QSpinBox()
-        self.timeout_spin.setRange(1, 300)
-        self.timeout_spin.setValue(10)
+        self.timeout_spin = UIHelper.create_spin_box()
         input_layout.addRow("超时时间(秒):", self.timeout_spin)
 
         # 执行后进行指纹识别
-        self.fp_after_payload_chk = QCheckBox("执行后进行指纹识别")
-        self.fp_after_payload_chk.setChecked(False)
+        self.fp_after_payload_chk = UIHelper.create_checkbox("执行后进行指纹识别")
         input_layout.addRow("", self.fp_after_payload_chk)
 
         # 成功后自动添加到映射库
-        self.add_to_mapping_chk = QCheckBox("成功后自动添加到映射库")
-        self.add_to_mapping_chk.setChecked(False)
+        self.add_to_mapping_chk = UIHelper.create_checkbox("成功后自动添加到映射库")
         input_layout.addRow("", self.add_to_mapping_chk)
 
-        input_group.setLayout(input_layout)
+        input_group = UIHelper.create_group_box("参数设置", input_layout)
         layout.addWidget(input_group)
-        
-        # 按钮区域（包装在小边框中）
-        button_layout = QHBoxLayout()
-        
-        self.show_btn = QPushButton("显示 Payload")
-        self.show_btn.clicked.connect(self.show_payload)
-        # 美化为操作类按钮
-        try:
-            self.show_btn.setProperty("role", "operation")
-        except Exception:
-            pass
-        button_layout.addWidget(self.show_btn)
-        
-        self.send_btn = QPushButton("发送 Payload")
-        # 主要操作按钮美化
-        self.send_btn.setObjectName("primary")
-        self.send_btn.clicked.connect(self.send_payload)
-        button_layout.addWidget(self.send_btn)
-        
-        self.refresh_btn = QPushButton("刷新列表")
-        self.refresh_btn.clicked.connect(self.refresh_payload_list)
-        try:
-            self.refresh_btn.setProperty("role", "operation")
-        except Exception:
-            pass
-        button_layout.addWidget(self.refresh_btn)
+
+        # 按钮区域
+        buttons = [
+            UIHelper.create_button("显示 Payload", self.show_payload, role="operation"),
+            UIHelper.create_button("发送 Payload", self.send_payload, object_name="primary"),
+            UIHelper.create_button("刷新列表", self.refresh_payload_list, role="operation"),
+        ]
 
         # 进行指纹识别按钮（初始禁用）
-        self.fingerprint_btn = QPushButton("进行指纹识别")
+        self.fingerprint_btn = UIHelper.create_button("进行指纹识别", self.start_fingerprint_after_payload, role="operation")
         self.fingerprint_btn.setEnabled(False)
-        self.fingerprint_btn.clicked.connect(self.start_fingerprint_after_payload)
-        try:
-            self.fingerprint_btn.setProperty("role", "operation")
-        except Exception:
-            pass
-        button_layout.addWidget(self.fingerprint_btn)
+        buttons.append(self.fingerprint_btn)
 
-        button_layout.addStretch()
-        btn_group = QGroupBox()
-        btn_group.setTitle("")  # 小边框，无标题
-        btn_group.setLayout(button_layout)
-        btn_group.setStyleSheet("QGroupBox { border: 1px solid #d0d0d0; padding:6px; border-radius:4px; }")
+        btn_group = UIHelper.create_button_group_box(buttons)
         layout.addWidget(btn_group)
-        
+
         # 结果显示区域
-        result_group = QGroupBox("结果显示")
-        result_layout = QVBoxLayout()
-        
-        self.result_text = QTextEdit()
-        self.result_text.setReadOnly(True)
-        self.result_text.setFont(QFont("Consolas", 10))
-        result_layout.addWidget(self.result_text)
-        
-        result_group.setLayout(result_layout)
+        result_group, self.result_text = UIHelper.create_result_group_box("结果显示")
         layout.addWidget(result_group)
-        
+
         widget.setLayout(layout)
         return widget
     
@@ -599,125 +557,88 @@ class MainWindow(QMainWindow):
         """创建数据包生成标签页"""
         widget = QWidget()
         layout = QVBoxLayout()
-        
+
         # 输入区域
-        input_group = QGroupBox("数据包输入")
-        input_layout = QFormLayout()
-        
+        input_layout = UIHelper.create_form_layout()
+
         # CVE ID
-        self.cve_id_input = QLineEdit()
-        self.cve_id_input.setPlaceholderText("例如: CVE-2024-XXXX")
+        self.cve_id_input = UIHelper.create_line_edit("例如: CVE-2024-XXXX")
         input_layout.addRow("CVE 编号:", self.cve_id_input)
-        
-        # 数据包文件选择（仅文件，不支持手动粘贴内容）
+
+        # 数据包文件选择
         file_layout = QHBoxLayout()
-        self.packet_file_input = QLineEdit()
-        self.packet_file_input.setPlaceholderText("选择数据包文件...")
-        self.packet_file_input.setReadOnly(True)  # 禁止手动输入，必须选择文件
-        file_btn = QPushButton("浏览...")
-        # 直接在此处使用本地回调，避免依赖类中后面定义的方法导致的引用问题
-        def _on_browse_file():
-            file_path, _ = QFileDialog.getOpenFileName(self, "选择数据包文件", "", "文本文件 (*.txt);;所有文件 (*.*)")
-            if file_path:
-                self.packet_file_input.setText(file_path)
-        file_btn.clicked.connect(_on_browse_file)
+        self.packet_file_input = UIHelper.create_line_edit("选择数据包文件...", read_only=True)
+        file_btn = UIHelper.create_button("浏览...", lambda: self._browse_packet_file())
         file_layout.addWidget(self.packet_file_input)
         file_layout.addWidget(file_btn)
         input_layout.addRow("数据包文件:", file_layout)
-        
+
         # 输出目录
         output_layout = QHBoxLayout()
-        self.output_dir_input = QLineEdit()
-        self.output_dir_input.setPlaceholderText("默认: payloads/")
-        output_btn = QPushButton("浏览...")
-        def _on_browse_dir():
-            dir_path = QFileDialog.getExistingDirectory(self, "选择输出目录", "")
-            if dir_path:
-                self.output_dir_input.setText(dir_path)
-        output_btn.clicked.connect(_on_browse_dir)
+        self.output_dir_input = UIHelper.create_line_edit("默认: payloads/")
+        output_btn = UIHelper.create_button("浏览...", lambda: self._browse_output_dir())
         output_layout.addWidget(self.output_dir_input)
         output_layout.addWidget(output_btn)
         input_layout.addRow("输出目录:", output_layout)
-        
-        input_group.setLayout(input_layout)
+
+        input_group = UIHelper.create_group_box("数据包输入", input_layout)
         layout.addWidget(input_group)
-        
-        # 按钮区域（包装在小边框中）
-        button_layout = QHBoxLayout()
-        
-        self.parse_btn = QPushButton("拆解数据包")
-        def _on_parse_btn_clicked():
-            try:
-                return self.parse_packet()
-            except Exception as e:
-                QMessageBox.warning(self, "错误", f"拆解功能暂不可用: {e}")
-        self.parse_btn.clicked.connect(_on_parse_btn_clicked)
-        try:
-            self.parse_btn.setProperty("role", "operation")
-        except Exception:
-            pass
-        button_layout.addWidget(self.parse_btn)
-        
-        self.generate_btn = QPushButton("生成并保存模板")
-        self.generate_btn.setObjectName("primary")
-        def _on_generate_btn_clicked():
-            try:
-                return self.generate_template()
-            except Exception as e:
-                QMessageBox.warning(self, "错误", f"生成模板功能暂不可用: {e}")
-        self.generate_btn.clicked.connect(_on_generate_btn_clicked)
-        button_layout.addWidget(self.generate_btn)
-        
-        button_layout.addStretch()
-        btn_group = QGroupBox()
-        btn_group.setTitle("")
-        btn_group.setLayout(button_layout)
-        btn_group.setStyleSheet("QGroupBox { border: 1px solid #d0d0d0; padding:6px; border-radius:4px; }")
+
+        # 按钮区域
+        self.parse_btn = UIHelper.create_button("拆解数据包", self._on_parse_btn_clicked, role="operation")
+        self.generate_btn = UIHelper.create_button("生成并保存模板", self._on_generate_btn_clicked, object_name="primary")
+
+        btn_group = UIHelper.create_button_group_box([self.parse_btn, self.generate_btn])
         layout.addWidget(btn_group)
-        
+
         # 结果显示区域
-        result_group = QGroupBox("拆解结果")
-        result_layout = QVBoxLayout()
-        
-        self.parse_result_text = QTextEdit()
-        self.parse_result_text.setReadOnly(True)
-        self.parse_result_text.setFont(QFont("Consolas", 10))
-        result_layout.addWidget(self.parse_result_text)
-        
-        result_group.setLayout(result_layout)
+        result_group, self.parse_result_text = UIHelper.create_result_group_box("拆解结果")
         layout.addWidget(result_group)
-        
+
         widget.setLayout(layout)
         return widget
+
+    def _browse_packet_file(self):
+        """浏览数据包文件"""
+        file_path = UIHelper.get_open_file(self, "选择数据包文件", "文本文件 (*.txt);;所有文件 (*.*)")
+        if file_path:
+            self.packet_file_input.setText(file_path)
+
+    def _browse_output_dir(self):
+        """浏览输出目录"""
+        dir_path = UIHelper.get_existing_directory(self, "选择输出目录")
+        if dir_path:
+            self.output_dir_input.setText(dir_path)
+
+    def _on_parse_btn_clicked(self):
+        """拆解按钮点击回调"""
+        try:
+            return self.parse_packet()
+        except Exception as e:
+            UIHelper.show_warning(self, "错误", f"拆解功能暂不可用: {e}")
+
+    def _on_generate_btn_clicked(self):
+        """生成按钮点击回调"""
+        try:
+            return self.generate_template()
+        except Exception as e:
+            UIHelper.show_warning(self, "错误", f"生成模板功能暂不可用: {e}")
 
     def create_list_tab(self):
         """创建 Payload 列表标签页"""
         widget = QWidget()
         layout = QVBoxLayout()
-        
-        # 按钮区域（包装在小边框中）
-        button_layout = QHBoxLayout()
-        
-        refresh_list_btn = QPushButton("刷新列表")
-        refresh_list_btn.clicked.connect(self.refresh_payload_list_in_tab)
-        try:
-            refresh_list_btn.setProperty("role", "operation")
-        except Exception:
-            pass
-        button_layout.addWidget(refresh_list_btn)
-        
-        button_layout.addStretch()
-        btn_group = QGroupBox()
-        btn_group.setTitle("")
-        btn_group.setLayout(button_layout)
-        btn_group.setStyleSheet("QGroupBox { border: 1px solid #d0d0d0; padding:6px; border-radius:4px; }")
+
+        # 按钮区域
+        refresh_list_btn = UIHelper.create_button("刷新列表", self.refresh_payload_list_in_tab, role="operation")
+        btn_group = UIHelper.create_button_group_box([refresh_list_btn])
         layout.addWidget(btn_group)
-        
+
         # 列表显示
         self.payload_list = QListWidget()
         self.refresh_payload_list_in_tab()
         layout.addWidget(self.payload_list)
-        
+
         widget.setLayout(layout)
         return widget
     
@@ -742,7 +663,7 @@ class MainWindow(QMainWindow):
                     except:
                         continue
         except Exception as e:
-            QMessageBox.warning(self, "警告", f"刷新列表失败: {e}")
+            UIHelper.show_warning(self, "警告", f"刷新列表失败: {e}")
     
     def refresh_payload_list_in_tab(self):
         """刷新 Payload 列表（用于列表标签页）"""
@@ -772,7 +693,7 @@ class MainWindow(QMainWindow):
             if count == 0:
                 self.payload_list.addItem("未找到有效的 payload 模块")
         except Exception as e:
-            QMessageBox.warning(self, "警告", f"刷新列表失败: {e}")
+            UIHelper.show_warning(self, "警告", f"刷新列表失败: {e}")
     
     def show_payload(self):
         """显示 Payload"""
@@ -781,13 +702,13 @@ class MainWindow(QMainWindow):
         cmd = self.cmd_input.text().strip()
         
         if not module_name:
-            QMessageBox.warning(self, "警告", "请选择或输入 Payload 模块名")
+            UIHelper.show_warning(self, "警告", "请选择或输入 Payload 模块名")
             return
         if not ip_port:
-            QMessageBox.warning(self, "警告", "请输入目标地址")
+            UIHelper.show_warning(self, "警告", "请输入目标地址")
             return
         if not cmd:
-            QMessageBox.warning(self, "警告", "请输入要执行的命令")
+            UIHelper.show_warning(self, "警告", "请输入要执行的命令")
             return
         
         try:
@@ -833,7 +754,7 @@ class MainWindow(QMainWindow):
             self.result_text.append("=" * 60)
             
         except Exception as e:
-            QMessageBox.critical(self, "错误", f"显示 Payload 失败: {e}")
+            UIHelper.show_error(self, "错误", f"显示 Payload 失败: {e}")
             self.result_text.append(f"[!] 错误: {e}")
     
     def send_payload(self):
@@ -844,13 +765,13 @@ class MainWindow(QMainWindow):
         timeout = self.timeout_spin.value()
         
         if not module_name:
-            QMessageBox.warning(self, "警告", "请选择或输入 Payload 模块名")
+            UIHelper.show_warning(self, "警告", "请选择或输入 Payload 模块名")
             return
         if not ip_port:
-            QMessageBox.warning(self, "警告", "请输入目标地址")
+            UIHelper.show_warning(self, "警告", "请输入目标地址")
             return
         if not cmd:
-            QMessageBox.warning(self, "警告", "请输入要执行的命令")
+            UIHelper.show_warning(self, "警告", "请输入要执行的命令")
             return
         
         # 禁用按钮
@@ -941,7 +862,7 @@ class MainWindow(QMainWindow):
                 self.on_send_error(err)
             except Exception as e:
                 try:
-                    QMessageBox.critical(self, "错误", f"发送失败: {err}")
+                    UIHelper.show_error(self, "错误", f"发送失败: {err}")
                 except Exception:
                     self.result_text.append(f"[!] error 回调出错: {e}")
 
@@ -1008,11 +929,11 @@ class MainWindow(QMainWindow):
         timeout = self.css_timeout_spin.value()
 
         if not page_url:
-            QMessageBox.warning(self, "警告", "请输入页面 URL")
+            UIHelper.show_warning(self, "警告", "请输入页面 URL")
             return
 
         if get_css_files_md5_from_page is None and get_resources_fingerprint_from_page is None:
-            QMessageBox.warning(self, "警告", "指纹识别功能未加载")
+            UIHelper.show_warning(self, "警告", "指纹识别功能未加载")
             return
 
         # 禁用按钮
@@ -1034,7 +955,7 @@ class MainWindow(QMainWindow):
 
         if not resource_dict:
             self.css_result_text.append("[!] 未找到静态资源或访问页面失败")
-            QMessageBox.warning(self, "警告", "未找到静态资源或访问页面失败")
+            UIHelper.show_warning(self, "警告", "未找到静态资源或访问页面失败")
             return
 
         self.css_result_text.clear()
@@ -1134,16 +1055,16 @@ class MainWindow(QMainWindow):
             self.css_result_text.append(f"匹配到的 CVE 列表: {', '.join(sorted(matched_cve_set))}")
 
         if success_count > 0:
-            QMessageBox.information(self, "成功", f"成功识别 {success_count} 个资源的指纹，匹配到 {matched_cve} 个CVE")
+            UIHelper.show_info(self, "成功", f"成功识别 {success_count} 个资源的指纹，匹配到 {matched_cve} 个CVE")
         else:
-            QMessageBox.warning(self, "警告", "所有资源下载失败")
+            UIHelper.show_warning(self, "警告", "所有资源下载失败")
     
     def on_css_md5_error(self, error_msg):
         """资源指纹识别错误回调"""
         self.css_calculate_btn.setEnabled(True)
         self.css_calculate_btn.setText("计算资源指纹")
         self.css_result_text.append(f"[!] 错误: {error_msg}")
-        QMessageBox.critical(self, "错误", f"计算失败: {error_msg}")
+        UIHelper.show_error(self, "错误", f"计算失败: {error_msg}")
     
     def create_portscan_tab(self):
         """创建端口扫描标签页"""
@@ -1215,7 +1136,7 @@ class MainWindow(QMainWindow):
         timeout = self.port_timeout_spin.value()
 
         if not host:
-            QMessageBox.warning(self, "警告", "请输入目标主机")
+            UIHelper.show_warning(self, "警告", "请输入目标主机")
             return
 
         # 解析端口输入
@@ -1228,7 +1149,7 @@ class MainWindow(QMainWindow):
                 else:
                     ports = [int(p.strip()) for p in ports_text.split(',') if p.strip()]
             except Exception:
-                QMessageBox.warning(self, "警告", "端口格式错误，请使用逗号分隔或范围（如 80,443 或 1-1024）")
+                UIHelper.show_warning(self, "警告", "端口格式错误，请使用逗号分隔或范围（如 80,443 或 1-1024）")
                 return
 
         # 禁用按钮
@@ -1271,7 +1192,7 @@ class MainWindow(QMainWindow):
         self.portscan_start_btn.setEnabled(True)
         self.portscan_start_btn.setText("开始扫描")
         self.portscan_result_text.append(f"[!] 错误: {error_msg}")
-        QMessageBox.critical(self, "错误", f"端口扫描失败: {error_msg}")
+        UIHelper.show_error(self, "错误", f"端口扫描失败: {error_msg}")
     
     def create_auto_test_tab(self):
         """创建自动化测试标签页"""
@@ -1402,7 +1323,7 @@ class MainWindow(QMainWindow):
         fp_timeout = 3
         send_timeout = 10
         if not host_input:
-            QMessageBox.warning(self, "警告", "请输入目标 IP 或 IP:端口 或 URL")
+            UIHelper.show_warning(self, "警告", "请输入目标 IP 或 IP:端口 或 URL")
             return
 
         # 读取端口扫描复选框状态（若存在）
@@ -1427,10 +1348,10 @@ class MainWindow(QMainWindow):
                         else:
                             ports_list = [int(p.strip()) for p in ports_text.split(',') if p.strip()]
                     except Exception:
-                        QMessageBox.warning(self, "警告", "端口格式错误，请使用逗号分隔或范围（如 80,443 或 1-1024）")
+                        UIHelper.show_warning(self, "警告", "端口格式错误，请使用逗号分隔或范围（如 80,443 或 1-1024）")
                         return
                 else:
-                    QMessageBox.warning(self, "警告", "请输入自定义端口")
+                    UIHelper.show_warning(self, "警告", "请输入自定义端口")
                     return
             elif port_mode == "all":
                 # 全量端口
@@ -1506,7 +1427,7 @@ class MainWindow(QMainWindow):
         api_key = self.qw_api_key_input.text().strip()
         model = self.qw_model_combo.currentText()
         if not api_key:
-            QMessageBox.warning(self, "提示", "API Key 为空，未保存")
+            UIHelper.show_warning(self, "提示", "API Key 为空，未保存")
             return
         try:
             from src.config import Config
@@ -1518,9 +1439,9 @@ class MainWindow(QMainWindow):
         try:
             with open(config_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
-            QMessageBox.information(self, "成功", f"配置已保存到:\n{config_path}")
+            UIHelper.show_info(self, "成功", f"配置已保存到:\n{config_path}")
         except Exception as e:
-            QMessageBox.critical(self, "错误", f"保存失败: {e}")
+            UIHelper.show_error(self, "错误", f"保存失败: {e}")
 
     def _load_ai_config(self, silent: bool = False):
         """从 ai_config.json 加载 API Key 和模型名"""
@@ -1533,7 +1454,7 @@ class MainWindow(QMainWindow):
 
         if not config_path.exists():
             if not silent:
-                QMessageBox.information(self, "提示", "未找到已保存的配置文件")
+                UIHelper.show_info(self, "提示", "未找到已保存的配置文件")
             return
 
         try:
@@ -1546,10 +1467,10 @@ class MainWindow(QMainWindow):
             if idx >= 0:
                 self.qw_model_combo.setCurrentIndex(idx)
             if not silent:
-                QMessageBox.information(self, "成功", "配置加载成功")
+                UIHelper.show_info(self, "成功", "配置加载成功")
         except Exception as e:
             if not silent:
-                QMessageBox.critical(self, "错误", f"加载失败: {e}")
+                UIHelper.show_error(self, "错误", f"加载失败: {e}")
 
     def _update_char_count(self):
         """更新输入框字符计数标签"""
@@ -1572,7 +1493,7 @@ class MainWindow(QMainWindow):
         """
         api_key = self.qw_api_key_input.text().strip()
         if not api_key:
-            QMessageBox.warning(self, "提示", "请先输入 API Key")
+            UIHelper.show_warning(self, "提示", "请先输入 API Key")
             return
 
         user_text = self.qw_user_input.toPlainText().strip()
@@ -2146,11 +2067,7 @@ class MainWindow(QMainWindow):
 
     def _clear_qianwen_chat(self):
         """清空对话历史和显示区域"""
-        reply = QMessageBox.question(
-            self, "确认", "确定要清空所有对话记录吗？",
-            QMessageBox.Yes | QMessageBox.No
-        )
-        if reply == QMessageBox.Yes:
+        if UIHelper.show_question(self, "确认", "确定要清空所有对话记录吗？"):
             self._qianwen_history = []
             self._current_ai_response = ""
             self.qw_chat_display.clear()
@@ -2158,11 +2075,7 @@ class MainWindow(QMainWindow):
 
     def _clear_ai_exec_log(self):
         """清空 AI 执行日志"""
-        reply = QMessageBox.question(
-            self, "确认", "确定要清空 AI 执行日志吗？",
-            QMessageBox.Yes | QMessageBox.No
-        )
-        if reply == QMessageBox.Yes:
+        if UIHelper.show_question(self, "确认", "确定要清空 AI 执行日志吗？"):
             self._ai_exec_log = []
             self.qw_exec_log_display.clear()
             self.qw_exec_log_display.append(
@@ -2291,9 +2204,9 @@ class MainWindow(QMainWindow):
         self.auto_result_text.append("=" * 60)
         
         if success_count > 0:
-            QMessageBox.information(self, "完成", f"自动化测试完成\n成功执行: {success_count}/{total_count}")
+            UIHelper.show_info(self, "完成", f"自动化测试完成\n成功执行: {success_count}/{total_count}")
         else:
-            QMessageBox.warning(self, "完成", f"自动化测试完成，但所有Payload执行失败")
+            UIHelper.show_warning(self, "完成", f"自动化测试完成，但所有Payload执行失败")
         
         # 批量交互：收集表格中可操作的 CVE 条目（只包含至少有一个成功端口的 CVE）
         try:
@@ -2352,7 +2265,7 @@ class MainWindow(QMainWindow):
         self.auto_test_btn.setEnabled(True)
         self.auto_test_btn.setText("开始自动化测试")
         self.auto_result_text.append(f"\n[!] 错误: {error_msg}")
-        QMessageBox.critical(self, "错误", f"自动化测试失败: {error_msg}")
+        UIHelper.show_error(self, "错误", f"自动化测试失败: {error_msg}")
 
     def on_auto_test_detail(self, detail: dict):
         """收到单个 CVE 的执行详情并更新表格"""
@@ -2425,7 +2338,7 @@ class MainWindow(QMainWindow):
     def view_payload_for_row(self, row: int, cve: str, host: str, ports: list):
         """在日志区显示选中 CVE 的 Payload（不发送）"""
         if not host:
-            QMessageBox.warning(self, "警告", "缺少目标主机信息，无法查看 Payload")
+            UIHelper.show_warning(self, "警告", "缺少目标主机信息，无法查看 Payload")
             return
         module_name = cve.replace('-', '_')
         # 若有多个端口，选择一个
@@ -2450,15 +2363,15 @@ class MainWindow(QMainWindow):
             self.auto_result_text.append(json.dumps(payload, indent=2, ensure_ascii=False))
             self.auto_result_text.append("=" * 60)
         except Exception as e:
-            QMessageBox.critical(self, "错误", f"查看 Payload 失败: {e}")
+            UIHelper.show_error(self, "错误", f"查看 Payload 失败: {e}")
 
     def execute_payload_for_row(self, row: int, cve: str, host: str, ports: list):
         """执行选中 CVE 的 Payload（异步）"""
         if not host:
-            QMessageBox.warning(self, "警告", "缺少目标主机信息，无法执行 Payload")
+            UIHelper.show_warning(self, "警告", "缺少目标主机信息，无法执行 Payload")
             return
         if not ports:
-            QMessageBox.warning(self, "警告", "此 CVE 未匹配到任何端口，无法执行")
+            UIHelper.show_warning(self, "警告", "此 CVE 未匹配到任何端口，无法执行")
             return
         # 若有多个端口，选择一个
         if len(ports) == 1:
@@ -2494,11 +2407,10 @@ class MainWindow(QMainWindow):
 
                 # 否则仍保留简单交互：询问是否继续一次性执行另一个命令
                 while True:
-                    reply = QMessageBox.question(self, "继续执行？", "是否继续执行其他命令？", QMessageBox.Yes | QMessageBox.No)
-                    if reply == QMessageBox.Yes:
+                    if UIHelper.show_question(self, "继续执行？", "是否继续执行其他命令？"):
                         new_cmd, ok = QInputDialog.getText(self, "输入命令", "请输入要执行的命令:", QLineEdit.Normal, "whoami")
                         if not ok or not new_cmd.strip():
-                            QMessageBox.information(self, "提示", "未输入命令，停止继续执行")
+                            UIHelper.show_info(self, "提示", "未输入命令，停止继续执行")
                             break
                         # 启动新的 worker，并使用相同的回调以支持循环
                         next_worker = PayloadWorker(self.manager, module_name, ip_port, new_cmd.strip(), timeout=10)
@@ -2532,7 +2444,7 @@ class MainWindow(QMainWindow):
     def save_payload_for_row(self, row: int, cve: str, host: str, ports: list):
         """将生成的 Payload 保存为 JSON 文件"""
         if not host:
-            QMessageBox.warning(self, "警告", "缺少目标主机信息，无法保存 Payload")
+            UIHelper.show_warning(self, "警告", "缺少目标主机信息，无法保存 Payload")
             return
         module_name = cve.replace('-', '_')
         port = ports[0] if ports else None
@@ -2541,16 +2453,16 @@ class MainWindow(QMainWindow):
         try:
             payload = self.manager.generate_payload(module_name, ip_port, cmd)
             if not payload:
-                QMessageBox.warning(self, "警告", "生成 Payload 失败，无法保存")
+                UIHelper.show_warning(self, "警告", "生成 Payload 失败，无法保存")
                 return
             filename, _ = QFileDialog.getSaveFileName(self, "保存 Payload 到文件", f"{module_name}_{host}.json", "JSON Files (*.json);;All Files (*)")
             if not filename:
                 return
             with open(filename, "w", encoding="utf-8") as f:
                 json.dump(payload, f, indent=2, ensure_ascii=False)
-            QMessageBox.information(self, "已保存", f"已将 Payload 保存到: {filename}")
+            UIHelper.show_info(self, "已保存", f"已将 Payload 保存到: {filename}")
         except Exception as e:
-            QMessageBox.critical(self, "错误", f"保存 Payload 失败: {e}")
+            UIHelper.show_error(self, "错误", f"保存 Payload 失败: {e}")
 
     def ignore_row(self, row: int):
         """将表格中该行标记为忽略（变灰）"""
@@ -2570,7 +2482,7 @@ class MainWindow(QMainWindow):
         self.send_btn.setEnabled(True)
         self.send_btn.setText("发送 Payload")
         self.result_text.append(f"[!] 错误: {error_msg}")
-        QMessageBox.critical(self, "错误", f"发送失败: {error_msg}")
+        UIHelper.show_error(self, "错误", f"发送失败: {error_msg}")
         # 禁用指纹识别按钮
         self.fingerprint_btn.setEnabled(False)
 
@@ -2661,13 +2573,7 @@ class MainWindow(QMainWindow):
             self.result_text.append(result_text)
 
             # 提示用户是否添加到映射库
-            reply = QMessageBox.question(
-                self, "添加到映射库",
-                f"是否将这些指纹与 {cve_module} 关联添加到映射库?",
-                QMessageBox.Yes | QMessageBox.No
-            )
-
-            if reply == QMessageBox.Yes:
+            if UIHelper.show_question(self, "添加到映射库", f"是否将这些指纹与 {cve_module} 关联添加到映射库?"):
                 self._add_fingerprints_to_mapping(fingerprints, cve_module)
         except Exception as e:
             self.result_text.append(f"[!] 处理指纹结果失败: {e}")
@@ -2706,13 +2612,13 @@ class MainWindow(QMainWindow):
             try:
                 manager.save()
                 self.result_text.append(f"[+] 已添加 {added_count} 个指纹到映射库")
-                QMessageBox.information(self, "成功", f"已添加 {added_count} 个指纹到映射库")
+                UIHelper.show_info(self, "成功", f"已添加 {added_count} 个指纹到映射库")
             except Exception as e:
                 self.result_text.append(f"[!] 保存映射库失败: {e}")
-                QMessageBox.warning(self, "警告", f"指纹已添加但保存失败: {e}")
+                UIHelper.show_warning(self, "警告", f"指纹已添加但保存失败: {e}")
         except Exception as e:
             self.result_text.append(f"[!] 添加到映射库失败: {e}")
-            QMessageBox.critical(self, "错误", f"添加失败: {e}")
+            UIHelper.show_error(self, "错误", f"添加失败: {e}")
 
     def _on_fingerprint_error(self, error_msg):
         """指纹识别错误回调"""
@@ -2861,10 +2767,10 @@ class BatchCommandDialog(QDialog):
     def on_exec_selected_keep(self):
         cmd = self.cmd_input_batch.text().strip()
         if not cmd:
-            QMessageBox.warning(self, "警告", "请输入要执行的命令")
+            UIHelper.show_warning(self, "警告", "请输入要执行的命令")
             return
         if not self.collect_selected():
-            QMessageBox.warning(self, "警告", "请先选择至少一项")
+            UIHelper.show_warning(self, "警告", "请先选择至少一项")
             return
         self._current_index = 0
         self.append_output(f"开始执行命令: {cmd}（共 {len(self._to_execute)} 项）")
@@ -2873,10 +2779,10 @@ class BatchCommandDialog(QDialog):
     def on_exec_selected_close(self):
         cmd = self.cmd_input_batch.text().strip()
         if not cmd:
-            QMessageBox.warning(self, "警告", "请输入要执行的命令")
+            UIHelper.show_warning(self, "警告", "请输入要执行的命令")
             return
         if not self.collect_selected():
-            QMessageBox.warning(self, "警告", "请先选择至少一项")
+            UIHelper.show_warning(self, "警告", "请先选择至少一项")
             return
         self._current_index = 0
         self.append_output(f"开始执行命令: {cmd}（共 {len(self._to_execute)} 项），完成后关闭窗口")
@@ -2965,7 +2871,7 @@ class BatchCommandDialog(QDialog):
     def on_exec_once(self):
         cmd = self.cmd_input.text().strip()
         if not cmd:
-            QMessageBox.warning(self, "警告", "请输入要执行的命令")
+            UIHelper.show_warning(self, "警告", "请输入要执行的命令")
             return
         # 执行一次但保持窗口打开，用户可查看输出并手动关闭
         self.run_command_async(cmd)
@@ -2973,7 +2879,7 @@ class BatchCommandDialog(QDialog):
     def on_exec_keep(self):
         cmd = self.cmd_input.text().strip()
         if not cmd:
-            QMessageBox.warning(self, "警告", "请输入要执行的命令")
+            UIHelper.show_warning(self, "警告", "请输入要执行的命令")
             return
         self.run_command_async(cmd)
 
@@ -3103,7 +3009,7 @@ class BatchCommandDialog(QDialog):
     def add_fingerprint_mapping(self):
         """添加或更新指纹-CVE映射"""
         if get_manager is None:
-            QMessageBox.warning(self, "警告", "指纹-CVE映射模块未加载")
+            UIHelper.show_warning(self, "警告", "指纹-CVE映射模块未加载")
             return
 
         fingerprint = self.fp_fingerprint_input.text().strip()
@@ -3111,12 +3017,12 @@ class BatchCommandDialog(QDialog):
         description = self.fp_description_input.text().strip() or None
         
         if not fingerprint:
-            QMessageBox.warning(self, "警告", "请输入指纹")
+            UIHelper.show_warning(self, "警告", "请输入指纹")
             return
         
         manager = get_manager()
         if manager.add_mapping(fingerprint, cve_id, description):
-            QMessageBox.information(self, "成功", f"成功添加映射: {fingerprint} -> {cve_id or '(无CVE)'}")
+            UIHelper.show_info(self, "成功", f"成功添加映射: {fingerprint} -> {cve_id or '(无CVE)'}")
             # 清空输入框
             self.fp_fingerprint_input.clear()
             self.fp_cve_input.clear()
@@ -3124,17 +3030,17 @@ class BatchCommandDialog(QDialog):
             # 刷新列表
             self.refresh_fingerprint_list()
         else:
-            QMessageBox.warning(self, "失败", "添加映射失败")
+            UIHelper.show_warning(self, "失败", "添加映射失败")
     
     def remove_fingerprint_mapping(self):
         """删除指纹-CVE映射"""
         if get_manager is None:
-            QMessageBox.warning(self, "警告", "指纹-CVE映射模块未加载")
+            UIHelper.show_warning(self, "警告", "指纹-CVE映射模块未加载")
             return
         
         current_item = self.fp_list_widget.currentItem()
         if not current_item:
-            QMessageBox.warning(self, "警告", "请先选择要删除的映射")
+            UIHelper.show_warning(self, "警告", "请先选择要删除的映射")
             return
         
         # 从显示文本中提取指纹（格式：指纹: xxx）
@@ -3142,18 +3048,16 @@ class BatchCommandDialog(QDialog):
         if "指纹:" in text:
             fingerprint = text.split("指纹:")[1].split("\n")[0].strip()
         else:
-            QMessageBox.warning(self, "警告", "无法解析指纹信息")
+            UIHelper.show_warning(self, "警告", "无法解析指纹信息")
             return
         
-        reply = QMessageBox.question(self, "确认", f"确定要删除指纹 {fingerprint} 的映射吗？",
-                                     QMessageBox.Yes | QMessageBox.No)
-        if reply == QMessageBox.Yes:
+        if UIHelper.show_question(self, "确认", f"确定要删除指纹 {fingerprint} 的映射吗？"):
             manager = get_manager()
             if manager.remove_mapping(fingerprint):
-                QMessageBox.information(self, "成功", "删除成功")
+                UIHelper.show_info(self, "成功", "删除成功")
                 self.refresh_fingerprint_list()
             else:
-                QMessageBox.warning(self, "失败", "删除失败")
+                UIHelper.show_warning(self, "失败", "删除失败")
     
     def refresh_fingerprint_list(self):
         """刷新指纹-CVE映射列表"""
@@ -3231,7 +3135,7 @@ class BatchCommandDialog(QDialog):
         self.send_btn.setEnabled(True)
         self.send_btn.setText("发送 Payload")
         self.result_text.append(f"[!] 错误: {error_msg}")
-        QMessageBox.critical(self, "错误", f"发送失败: {error_msg}")
+        UIHelper.show_error(self, "错误", f"发送失败: {error_msg}")
         # 禁用指纹识别按钮
         self.fingerprint_btn.setEnabled(False)
 
@@ -3322,13 +3226,7 @@ class BatchCommandDialog(QDialog):
             self.result_text.append(result_text)
 
             # 提示用户是否添加到映射库
-            reply = QMessageBox.question(
-                self, "添加到映射库",
-                f"是否将这些指纹与 {cve_module} 关联添加到映射库?",
-                QMessageBox.Yes | QMessageBox.No
-            )
-
-            if reply == QMessageBox.Yes:
+            if UIHelper.show_question(self, "添加到映射库", f"是否将这些指纹与 {cve_module} 关联添加到映射库?"):
                 self._add_fingerprints_to_mapping(fingerprints, cve_module)
         except Exception as e:
             self.result_text.append(f"[!] 处理指纹结果失败: {e}")
@@ -3367,13 +3265,13 @@ class BatchCommandDialog(QDialog):
             try:
                 manager.save()
                 self.result_text.append(f"[+] 已添加 {added_count} 个指纹到映射库")
-                QMessageBox.information(self, "成功", f"已添加 {added_count} 个指纹到映射库")
+                UIHelper.show_info(self, "成功", f"已添加 {added_count} 个指纹到映射库")
             except Exception as e:
                 self.result_text.append(f"[!] 保存映射库失败: {e}")
-                QMessageBox.warning(self, "警告", f"指纹已添加但保存失败: {e}")
+                UIHelper.show_warning(self, "警告", f"指纹已添加但保存失败: {e}")
         except Exception as e:
             self.result_text.append(f"[!] 添加到映射库失败: {e}")
-            QMessageBox.critical(self, "错误", f"添加失败: {e}")
+            UIHelper.show_error(self, "错误", f"添加失败: {e}")
 
     def _on_fingerprint_error(self, error_msg):
         """指纹识别错误回调"""
@@ -3404,15 +3302,15 @@ class BatchCommandDialog(QDialog):
         packet_file = self.packet_file_input.text().strip()
         
         if not cve_id:
-            QMessageBox.warning(self, "警告", "请输入 CVE 编号")
+            UIHelper.show_warning(self, "警告", "请输入 CVE 编号")
             return
         
         if not packet_file:
-            QMessageBox.warning(self, "警告", "请选择数据包文件")
+            UIHelper.show_warning(self, "警告", "请选择数据包文件")
             return
 
         if not os.path.exists(packet_file):
-            QMessageBox.warning(self, "警告", "数据包文件不存在")
+            UIHelper.show_warning(self, "警告", "数据包文件不存在")
             return
 
         try:
@@ -3440,7 +3338,7 @@ class BatchCommandDialog(QDialog):
                 self.parse_result_text.append(f"\n[!] {error_text}")
                 
         except Exception as e:
-            QMessageBox.critical(self, "错误", f"拆解失败: {e}")
+            UIHelper.show_error(self, "错误", f"拆解失败: {e}")
             self.parse_result_text.append(f"[!] 错误: {e}")
     
     def generate_template(self):
@@ -3450,15 +3348,15 @@ class BatchCommandDialog(QDialog):
         output_dir = self.output_dir_input.text().strip() or None
         
         if not cve_id:
-            QMessageBox.warning(self, "警告", "请输入 CVE 编号")
+            UIHelper.show_warning(self, "警告", "请输入 CVE 编号")
             return
         
         if not packet_file:
-            QMessageBox.warning(self, "警告", "请选择数据包文件")
+            UIHelper.show_warning(self, "警告", "请选择数据包文件")
             return
 
         if not os.path.exists(packet_file):
-            QMessageBox.warning(self, "警告", "数据包文件不存在")
+            UIHelper.show_warning(self, "警告", "数据包文件不存在")
             return
 
         try:
@@ -3487,9 +3385,9 @@ class BatchCommandDialog(QDialog):
                 path_match = re.search(r'模板已生成: (.+)', output_text)
                 if path_match:
                     file_path = path_match.group(1)
-                    QMessageBox.information(self, "成功", f"模板已保存到:\n{file_path}")
+                    UIHelper.show_info(self, "成功", f"模板已保存到:\n{file_path}")
                 else:
-                    QMessageBox.information(self, "成功", "模板生成成功！")
+                    UIHelper.show_info(self, "成功", "模板生成成功！")
                 
                 # 刷新列表
                 self.refresh_payload_list()
@@ -3497,10 +3395,10 @@ class BatchCommandDialog(QDialog):
             else:
                 error_text = result.get('_output_text', '模板生成失败') if result else '模板生成失败'
                 self.parse_result_text.append(f"\n[!] {error_text}")
-                QMessageBox.warning(self, "警告", error_text)
+                UIHelper.show_warning(self, "警告", error_text)
                 
         except Exception as e:
-            QMessageBox.critical(self, "错误", f"生成失败: {e}")
+            UIHelper.show_error(self, "错误", f"生成失败: {e}")
             self.parse_result_text.append(f"[!] 错误: {e}")
 
 
