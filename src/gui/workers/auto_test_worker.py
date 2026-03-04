@@ -161,18 +161,30 @@ class AutoTestWorker(QThread):
                         return
 
                     if not css_md5_dict:
-                        self._log(f"    [-] {url_for_fp} 未提取到 CSS 或访问失败")
+                        self._log(f"    [-] {url_for_fp} 未提取到 CSS 或访问失败", force=True)
                         continue
+
+                    self._log(f"    [DEBUG] 识别到 {len(css_md5_dict)} 个 CSS 资源", force=True)
 
                     for css_url, info in css_md5_dict.items():
                         if isinstance(info, tuple):
                             md5_hash, cve_id = info
                         else:
                             md5_hash, cve_id = info, None
+
+                        self._log(f"    [DEBUG] CSS: {css_url}", force=True)
+                        self._log(f"    [DEBUG]   MD5: {md5_hash}", force=True)
+                        self._log(f"    [DEBUG]   CVE: {cve_id}", force=True)
+
                         if md5_hash and cve_id:
                             # 简洁模式下不显示每个 CSS 文件的 MD5，只在详细模式显示
-                            self._log(f"        [+] {css_url} → CVE: {cve_id}")
+                            self._log(f"        [+] {css_url} → CVE: {cve_id}", force=True)
                             matched_cves_per_port.setdefault(cve_id, set()).add(port)
+                        else:
+                            if not md5_hash:
+                                self._log(f"    [DEBUG]   ⚠ MD5 为空", force=True)
+                            if not cve_id:
+                                self._log(f"    [DEBUG]   ⚠ CVE 为空（指纹未在映射库中找到）", force=True)
                 except Exception as e:
                     self._log(f"    [!] 指纹识别出错 ({base_host}:{port}): {e}", force=True)
 

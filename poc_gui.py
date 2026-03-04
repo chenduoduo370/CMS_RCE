@@ -28,7 +28,7 @@ try:
                                  QComboBox, QSpinBox, QGroupBox, QFormLayout,
                                  QProgressBar, QListWidget, QListWidgetItem, QSplitter, QTableWidget,
                                  QTableWidgetItem, QHeaderView, QDialog, QDialogButtonBox,
-                                 QInputDialog, QMenu)
+                                 QInputDialog, QMenu, QCheckBox)
     from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
     from PyQt5.QtGui import QFont, QTextCursor, QPixmap, QPalette, QBrush
     PYQT5_AVAILABLE = True
@@ -261,8 +261,10 @@ class MainWindow(QMainWindow):
         try:
             payload_tab = self.create_payload_tab()
             inner_tabs.addTab(payload_tab, "Payload 操作")
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[ERROR] 创建 Payload 操作标签页失败: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
 
         try:
             generate_tab = self.create_generate_tab()
@@ -521,7 +523,17 @@ class MainWindow(QMainWindow):
         self.timeout_spin.setRange(1, 300)
         self.timeout_spin.setValue(10)
         input_layout.addRow("超时时间(秒):", self.timeout_spin)
-        
+
+        # 执行后进行指纹识别
+        self.fp_after_payload_chk = QCheckBox("执行后进行指纹识别")
+        self.fp_after_payload_chk.setChecked(False)
+        input_layout.addRow("", self.fp_after_payload_chk)
+
+        # 成功后自动添加到映射库
+        self.add_to_mapping_chk = QCheckBox("成功后自动添加到映射库")
+        self.add_to_mapping_chk.setChecked(False)
+        input_layout.addRow("", self.add_to_mapping_chk)
+
         input_group.setLayout(input_layout)
         layout.addWidget(input_group)
         
@@ -550,7 +562,17 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         button_layout.addWidget(self.refresh_btn)
-        
+
+        # 进行指纹识别按钮（初始禁用）
+        self.fingerprint_btn = QPushButton("进行指纹识别")
+        self.fingerprint_btn.setEnabled(False)
+        self.fingerprint_btn.clicked.connect(self.start_fingerprint_after_payload)
+        try:
+            self.fingerprint_btn.setProperty("role", "operation")
+        except Exception:
+            pass
+        button_layout.addWidget(self.fingerprint_btn)
+
         button_layout.addStretch()
         btn_group = QGroupBox()
         btn_group.setTitle("")  # 小边框，无标题
@@ -905,6 +927,11 @@ class MainWindow(QMainWindow):
                     self.result_text.append("=" * 60)
                 except Exception as e:
                     self.result_text.append(f"[!] 渲染响应时出错: {e}")
+
+                # 如果勾选了"执行后进行指纹识别"且执行成功，启用指纹识别按钮
+                if self.fp_after_payload_chk.isChecked() and response.status_code == 200:
+                    self.fingerprint_btn.setEnabled(True)
+                    self.result_text.append("\n[*] 可以点击'进行指纹识别'按钮进行指纹识别")
                 return
             except Exception as e:
                 self.result_text.append(f"[!] finished 回调出错: {e}")
@@ -2538,6 +2565,162 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.auto_result_text.append(f"[!] 忽略行失败: {e}")
 
+    def on_send_error(self, error_msg):
+        """发送错误回调"""
+        self.send_btn.setEnabled(True)
+        self.send_btn.setText("发送 Payload")
+        self.result_text.append(f"[!] 错误: {error_msg}")
+        QMessageBox.critical(self, "错误", f"发送失败: {error_msg}")
+        # 禁用指纹识别按钮
+        self.fingerprint_btn.setEnabled(False)
+
+    def start_fingerprint_after_payload(self):
+        """手动触发指纹识别"""
+        try:
+            ip_port = self.ip_port_input.text().strip()
+            module_name = self.module_combo.currentText().strip()
+
+            if not ip_port:
+                self.result_text.append("[!] 无法获取目标地址")
+                return
+
+            # 构造目标 URL
+            if not ip_port.startswith('http://') and not ip_port.startswith('https://'):
+                url_for_fp = f"http://{ip_port}/"
+            else:
+                url_for_fp = ip_port if ip_port.endswith('/') else f"{ip_port}/"
+
+            self.result_text.append("\n" + "=" * 60)
+            self.result_text.append("[*] 开始进行指纹识别...")
+            self.result_text.append(f"[*] 目标 URL: {url_for_fp}")
+            self.result_text.append("=" * 60)
+
+            # 禁用按钮
+            self.fingerprint_btn.setEnabled(False)
+            self.fingerprint_btn.setText("识别中...")
+
+            self._start_fingerprint_detection(url_for_fp, module_name)
+        except Exception as e:
+            self.result_text.append(f"[!] 指纹识别启动失败: {e}")
+            self.fingerprint_btn.setEnabled(True)
+            self.fingerprint_btn.setText("进行指纹识别")
+
+    def _start_fingerprint_detection(self, url, cve_module):
+        """启动指纹识别工作线程"""
+        try:
+            timeout = self.css_timeout_spin.value()
+            self.css_worker = CSSMD5Worker(url, timeout)
+            self.css_worker.finished.connect(lambda result:
+                self._show_fingerprint_results_and_add_mapping(result, cve_module))
+            self.css_worker.error.connect(self._on_fingerprint_error)
+            self.css_worker.start()
+        except Exception as e:
+            self.result_text.append(f"[!] 启动指纹识别失败: {e}")
+            self.fingerprint_btn.setEnabled(True)
+            self.fingerprint_btn.setText("进行指纹识别")
+
+    def _show_fingerprint_results_and_add_mapping(self, fingerprints, cve_module):
+        """显示指纹识别结果并提供添加到映射库的选项"""
+        try:
+            # 恢复按钮状态
+            self.fingerprint_btn.setEnabled(True)
+            self.fingerprint_btn.setText("进行指纹识别")
+
+            if not fingerprints:
+                self.result_text.append("[!] 未识别到任何资源指纹")
+                return
+
+            # 显示指纹结果
+            result_text = "\n" + "=" * 60 + "\n"
+            result_text += "识别到的指纹:\n"
+            result_text += "=" * 60 + "\n"
+
+            for resource, info in fingerprints.items():
+                result_text += f"资源: {resource}\n"
+
+                # 处理旧格式（tuple）和新格式（dict）
+                if isinstance(info, tuple):
+                    md5_hash, cve_id = info
+                    if md5_hash:
+                        result_text += f"  MD5: {md5_hash}\n"
+                        if cve_id:
+                            result_text += f"  CVE: {cve_id}\n"
+                elif isinstance(info, dict):
+                    if 'md5' in info and info['md5']:
+                        result_text += f"  MD5: {info['md5']}\n"
+                    if 'sha1' in info and info['sha1']:
+                        result_text += f"  SHA1: {info['sha1']}\n"
+                    if 'sha256' in info and info['sha256']:
+                        result_text += f"  SHA256: {info['sha256']}\n"
+                    if 'cve' in info and info['cve']:
+                        result_text += f"  CVE: {info['cve']}\n"
+
+                result_text += "\n"
+
+            result_text += "=" * 60 + "\n"
+            self.result_text.append(result_text)
+
+            # 提示用户是否添加到映射库
+            reply = QMessageBox.question(
+                self, "添加到映射库",
+                f"是否将这些指纹与 {cve_module} 关联添加到映射库?",
+                QMessageBox.Yes | QMessageBox.No
+            )
+
+            if reply == QMessageBox.Yes:
+                self._add_fingerprints_to_mapping(fingerprints, cve_module)
+        except Exception as e:
+            self.result_text.append(f"[!] 处理指纹结果失败: {e}")
+
+    def _add_fingerprints_to_mapping(self, fingerprints, cve_module):
+        """将指纹添加到映射库"""
+        try:
+            if get_manager is None or FingerprintCVEManager is None:
+                self.result_text.append("[!] 指纹映射管理器不可用")
+                return
+
+            manager = get_manager()
+            if manager is None:
+                self.result_text.append("[!] 无法获取映射管理器")
+                return
+
+            added_count = 0
+            for resource, info in fingerprints.items():
+                try:
+                    # 提取 MD5 哈希
+                    md5_hash = None
+                    if isinstance(info, tuple):
+                        md5_hash, _ = info
+                    elif isinstance(info, dict):
+                        md5_hash = info.get('md5')
+
+                    if md5_hash:
+                        # 添加指纹-CVE 映射（将下划线转换为连字符）
+                        cve_id = cve_module.replace('_', '-')
+                        manager.add_mapping(md5_hash, cve_id=cve_id)
+                        added_count += 1
+                except Exception as e:
+                    self.result_text.append(f"[!] 添加指纹失败 ({resource}): {e}")
+
+            # 保存到文件
+            try:
+                manager.save()
+                self.result_text.append(f"[+] 已添加 {added_count} 个指纹到映射库")
+                QMessageBox.information(self, "成功", f"已添加 {added_count} 个指纹到映射库")
+            except Exception as e:
+                self.result_text.append(f"[!] 保存映射库失败: {e}")
+                QMessageBox.warning(self, "警告", f"指纹已添加但保存失败: {e}")
+        except Exception as e:
+            self.result_text.append(f"[!] 添加到映射库失败: {e}")
+            QMessageBox.critical(self, "错误", f"添加失败: {e}")
+
+    def _on_fingerprint_error(self, error_msg):
+        """指纹识别错误回调"""
+        self.result_text.append(f"[!] 指纹识别出错: {error_msg}")
+        # 恢复按钮状态
+        self.fingerprint_btn.setEnabled(True)
+        self.fingerprint_btn.setText("进行指纹识别")
+
 
 class CommandExecutionDialog(QDialog):
     """在 PoC 验证成功后弹出的命令执行对话框，允许用户连续输入并执行命令"""
@@ -3049,7 +3232,156 @@ class BatchCommandDialog(QDialog):
         self.send_btn.setText("发送 Payload")
         self.result_text.append(f"[!] 错误: {error_msg}")
         QMessageBox.critical(self, "错误", f"发送失败: {error_msg}")
-    
+        # 禁用指纹识别按钮
+        self.fingerprint_btn.setEnabled(False)
+
+    def start_fingerprint_after_payload(self):
+        """手动触发指纹识别"""
+        try:
+            ip_port = self.ip_port_input.text().strip()
+            module_name = self.module_combo.currentText().strip()
+
+            if not ip_port:
+                self.result_text.append("[!] 无法获取目标地址")
+                return
+
+            # 构造目标 URL
+            if not ip_port.startswith('http://') and not ip_port.startswith('https://'):
+                url_for_fp = f"http://{ip_port}/"
+            else:
+                url_for_fp = ip_port if ip_port.endswith('/') else f"{ip_port}/"
+
+            self.result_text.append("\n" + "=" * 60)
+            self.result_text.append("[*] 开始进行指纹识别...")
+            self.result_text.append(f"[*] 目标 URL: {url_for_fp}")
+            self.result_text.append("=" * 60)
+
+            # 禁用按钮
+            self.fingerprint_btn.setEnabled(False)
+            self.fingerprint_btn.setText("识别中...")
+
+            self._start_fingerprint_detection(url_for_fp, module_name)
+        except Exception as e:
+            self.result_text.append(f"[!] 指纹识别启动失败: {e}")
+            self.fingerprint_btn.setEnabled(True)
+            self.fingerprint_btn.setText("进行指纹识别")
+
+    def _start_fingerprint_detection(self, url, cve_module):
+        """启动指纹识别工作线程"""
+        try:
+            timeout = self.css_timeout_spin.value()
+            self.css_worker = CSSMD5Worker(url, timeout)
+            self.css_worker.finished.connect(lambda result:
+                self._show_fingerprint_results_and_add_mapping(result, cve_module))
+            self.css_worker.error.connect(self._on_fingerprint_error)
+            self.css_worker.start()
+        except Exception as e:
+            self.result_text.append(f"[!] 启动指纹识别失败: {e}")
+            self.fingerprint_btn.setEnabled(True)
+            self.fingerprint_btn.setText("进行指纹识别")
+
+    def _show_fingerprint_results_and_add_mapping(self, fingerprints, cve_module):
+        """显示指纹识别结果并提供添加到映射库的选项"""
+        try:
+            # 恢复按钮状态
+            self.fingerprint_btn.setEnabled(True)
+            self.fingerprint_btn.setText("进行指纹识别")
+
+            if not fingerprints:
+                self.result_text.append("[!] 未识别到任何资源指纹")
+                return
+
+            # 显示指纹结果
+            result_text = "\n" + "=" * 60 + "\n"
+            result_text += "识别到的指纹:\n"
+            result_text += "=" * 60 + "\n"
+
+            for resource, info in fingerprints.items():
+                result_text += f"资源: {resource}\n"
+
+                # 处理旧格式（tuple）和新格式（dict）
+                if isinstance(info, tuple):
+                    md5_hash, cve_id = info
+                    if md5_hash:
+                        result_text += f"  MD5: {md5_hash}\n"
+                        if cve_id:
+                            result_text += f"  CVE: {cve_id}\n"
+                elif isinstance(info, dict):
+                    if 'md5' in info and info['md5']:
+                        result_text += f"  MD5: {info['md5']}\n"
+                    if 'sha1' in info and info['sha1']:
+                        result_text += f"  SHA1: {info['sha1']}\n"
+                    if 'sha256' in info and info['sha256']:
+                        result_text += f"  SHA256: {info['sha256']}\n"
+                    if 'cve' in info and info['cve']:
+                        result_text += f"  CVE: {info['cve']}\n"
+
+                result_text += "\n"
+
+            result_text += "=" * 60 + "\n"
+            self.result_text.append(result_text)
+
+            # 提示用户是否添加到映射库
+            reply = QMessageBox.question(
+                self, "添加到映射库",
+                f"是否将这些指纹与 {cve_module} 关联添加到映射库?",
+                QMessageBox.Yes | QMessageBox.No
+            )
+
+            if reply == QMessageBox.Yes:
+                self._add_fingerprints_to_mapping(fingerprints, cve_module)
+        except Exception as e:
+            self.result_text.append(f"[!] 处理指纹结果失败: {e}")
+
+    def _add_fingerprints_to_mapping(self, fingerprints, cve_module):
+        """将指纹添加到映射库"""
+        try:
+            if get_manager is None or FingerprintCVEManager is None:
+                self.result_text.append("[!] 指纹映射管理器不可用")
+                return
+
+            manager = get_manager()
+            if manager is None:
+                self.result_text.append("[!] 无法获取映射管理器")
+                return
+
+            added_count = 0
+            for resource, info in fingerprints.items():
+                try:
+                    # 提取 MD5 哈希
+                    md5_hash = None
+                    if isinstance(info, tuple):
+                        md5_hash, _ = info
+                    elif isinstance(info, dict):
+                        md5_hash = info.get('md5')
+
+                    if md5_hash:
+                        # 添加指纹-CVE 映射（将下划线转换为连字符）
+                        cve_id = cve_module.replace('_', '-')
+                        manager.add_mapping(md5_hash, cve_id=cve_id)
+                        added_count += 1
+                except Exception as e:
+                    self.result_text.append(f"[!] 添加指纹失败 ({resource}): {e}")
+
+            # 保存到文件
+            try:
+                manager.save()
+                self.result_text.append(f"[+] 已添加 {added_count} 个指纹到映射库")
+                QMessageBox.information(self, "成功", f"已添加 {added_count} 个指纹到映射库")
+            except Exception as e:
+                self.result_text.append(f"[!] 保存映射库失败: {e}")
+                QMessageBox.warning(self, "警告", f"指纹已添加但保存失败: {e}")
+        except Exception as e:
+            self.result_text.append(f"[!] 添加到映射库失败: {e}")
+            QMessageBox.critical(self, "错误", f"添加失败: {e}")
+
+    def _on_fingerprint_error(self, error_msg):
+        """指纹识别错误回调"""
+        self.result_text.append(f"[!] 指纹识别出错: {error_msg}")
+        # 恢复按钮状态
+        self.fingerprint_btn.setEnabled(True)
+        self.fingerprint_btn.setText("进行指纹识别")
+
     def select_packet_file(self):
         """选择数据包文件"""
         file_path, _ = QFileDialog.getOpenFileName(
