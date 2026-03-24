@@ -743,8 +743,7 @@ class MainWindow(QMainWindow):
         container_layout.setContentsMargins(14, 14, 14, 14)
         container_layout.setSpacing(12)
 
-        self.top_nav = self._build_top_nav()
-        container_layout.addWidget(self.top_nav)
+        self.top_nav = None
         container_layout.addWidget(tabs, stretch=1)
         container.setLayout(container_layout)
         self.setCentralWidget(container)
@@ -756,11 +755,7 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
-        # 全局滚动监听，用于 50px 阈值切换导航栏状态
-        try:
-            QApplication.instance().installEventFilter(self)
-        except Exception:
-            pass
+        # 顶部工具栏已移除：无需安装滚动事件过滤器
 
         # Neumorphic shadows and press feedback for key widgets
         try:
@@ -999,9 +994,10 @@ class MainWindow(QMainWindow):
         layout.addWidget(input_group)
 
         # 按钮区域
+        self.send_btn = UIHelper.create_button("发送 Payload", self.send_payload, object_name="primary")
         buttons = [
             UIHelper.create_button("显示 Payload", self.show_payload, role="operation"),
-            UIHelper.create_button("发送 Payload", self.send_payload, object_name="primary"),
+            self.send_btn,
             UIHelper.create_button("刷新列表", self.refresh_payload_list, role="operation"),
         ]
 
