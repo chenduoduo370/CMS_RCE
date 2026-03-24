@@ -2,44 +2,135 @@
 
 /* 主窗口背景 */
 QMainWindow {
-    background-image: url(assets/background.jpg);
-    background-position: center;
-    background-repeat: no-repeat;
-    background-attachment: fixed;
+    background: qlineargradient(
+        x1:0, y1:0, x2:0, y2:1,
+        stop:0 #ffffff,
+        stop:1 #f3f4f6
+    );
+}
+
+/* 顶部工具栏（新拟态主义） */
+#TopNav {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #fbfbfb, stop:1 #f1f3f5);
+    border: 1px solid rgba(0, 0, 0, 18);
+    border-radius: 12px;
+}
+
+#TopNav[scrolled="true"] {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #f7f7f7, stop:1 #eceff3);
+    border: 1px solid rgba(0, 0, 0, 28);
+}
+
+#BrandLabel {
+    color: #111827;
+    font-size: 16px;
+    font-weight: 700;
+}
+
+#StatusDot {
+    background-color: rgba(0, 122, 255, 210);
+    border: 1px solid rgba(0, 0, 0, 16);
+    border-radius: 6px;
+}
+
+#UserHint {
+    color: rgba(17, 24, 39, 170);
+}
+
+/* 顶部工具栏组件（协作平台风格） */
+#TopSearch {
+    background-color: rgba(255, 255, 255, 245);
+    border: 1px solid rgba(0, 0, 0, 14);
+    border-radius: 12px;
+    padding: 8px 12px;
+    color: rgba(17, 24, 39, 235);
+}
+
+#TopSearch:focus {
+    border: 1px solid rgba(0, 122, 255, 180);
+}
+
+#TopAction {
+    min-height: 30px;
+    padding: 8px 14px;
+}
+
+#UserPill {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ffffff, stop:1 #eef1f4);
+    border: 1px solid rgba(0, 0, 0, 14);
+    border-radius: 999px;
+}
+
+#AvatarDot {
+    background-color: rgba(0, 122, 255, 210);
+    border: 1px solid rgba(0, 0, 0, 12);
+    border-radius: 9px;
+}
+
+#UserName {
+    color: rgba(17, 24, 39, 235);
+}
+
+#MappingFilter {
+    background-color: rgba(255, 255, 255, 245);
+    border: 1px solid rgba(0, 0, 0, 14);
+    border-radius: 12px;
+    padding: 8px 12px;
+    color: rgba(17, 24, 39, 235);
+}
+
+#MappingFilter:focus {
+    border: 1px solid rgba(0, 122, 255, 180);
 }
 
 /* 标签页容器背景半透明，确保内容可读 */
 QTabWidget::pane {
-    background-color: rgba(255, 255, 255, 0.92);
-    border: 1px solid #cccccc;
-    border-radius: 5px;
+    background-color: rgba(255, 255, 255, 235);
+    border: 1px solid rgba(0, 0, 0, 18);
+    border-radius: 12px;
+    margin-top: 0px;
+    padding-top: 8px;
+}
+
+QTabBar {
+    background: transparent;
 }
 
 QTabBar::tab {
-    background-color: rgba(230, 230, 230, 0.95);
-    color: #333333;
-    padding: 8px 16px;
-    margin-right: 2px;
-    border-top-left-radius: 4px;
-    border-top-right-radius: 4px;
-    font-weight: bold;
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #fbfbfb, stop:1 #eef1f4);
+    color: rgba(17, 24, 39, 200);
+    padding: 11px 18px;
+    margin-right: 6px;
+    margin-top: 2px;
+    margin-bottom: 0px;
+    border-top-left-radius: 10px;
+    border-top-right-radius: 10px;
+    border: 1px solid rgba(0, 0, 0, 16);
+    font-weight: 700;
+    min-height: 34px;
 }
 
 QTabBar::tab:selected {
-    background-color: rgba(255, 255, 255, 0.95);
-    color: #0066cc;
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ffffff, stop:1 #f6f7f9);
+    color: #007aff;
+    border: 1px solid rgba(0, 122, 255, 90);
+    margin-top: 0px;
+    margin-bottom: -1px;
+    border-bottom: 0px;
 }
 
 QTabBar::tab:hover {
-    background-color: rgba(240, 240, 240, 0.95);
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ffffff, stop:1 #f2f4f7);
+    color: rgba(17, 24, 39, 230);
+    border: 1px solid rgba(0, 0, 0, 22);
 }
 
-/* 所有按钮统一样式 - 使用明显的蓝色，加粗边框增强可见性 */
+/* 按钮（新拟态：外凸与按压） */
 QPushButton {
-    background-color: #0078d4;
-    color: white;
-    border: 3px solid #003d6e;
-    border-radius: 6px;
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ffffff, stop:1 #eceff3);
+    color: rgba(17, 24, 39, 230);
+    border: 1px solid rgba(0, 0, 0, 16);
+    border-radius: 10px;
     padding: 10px 18px;
     font-size: 14px;
     font-weight: bold;
@@ -47,44 +138,51 @@ QPushButton {
 }
 
 QPushButton:hover {
-    background-color: #106ebe;
-    border: 3px solid #002a4d;
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #1a7fc7, stop:1 #0d5fa0);
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ffffff, stop:1 #e7ebf1);
+    border: 1px solid rgba(0, 0, 0, 20);
 }
 
 QPushButton:pressed {
-    background-color: #004578;
-    border: 3px solid #001f3d;
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #e9edf3, stop:1 #ffffff);
+    border: 1px solid rgba(0, 0, 0, 22);
     padding: 11px 17px 9px 19px;
 }
 
+/* 由代码设置 pressed 属性时的更强按压反馈 */
+QPushButton[pressed="true"] {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #e6eaf1, stop:1 #ffffff);
+    border: 1px solid rgba(0, 0, 0, 24);
+}
+
 QPushButton:disabled {
-    background-color: #cccccc;
-    color: #666666;
-    border: 2px solid #999999;
+    background-color: rgba(243, 244, 246, 240);
+    color: rgba(17, 24, 39, 90);
+    border: 1px solid rgba(0, 0, 0, 10);
 }
 
 /* 危险操作按钮（删除、清除等）使用红色 */
 QPushButton[text*="删除"],
 QPushButton[text*="清除"],
 QPushButton[text*="移除"] {
-    background-color: #d13438;
-    border: 3px solid #8b2327;
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #fff5f5, stop:1 #ffe3e3);
+    color: rgba(127, 29, 29, 230);
+    border: 1px solid rgba(220, 38, 38, 70);
 }
 
 QPushButton[text*="删除"]:hover,
 QPushButton[text*="清除"]:hover,
 QPushButton[text*="移除"]:hover {
-    background-color: #b82e32;
-    border: 3px solid #6d1b1f;
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #e03d41, stop:1 #a72b2f);
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #fff1f2, stop:1 #ffd9dd);
+    color: rgba(127, 29, 29, 240);
+    border: 1px solid rgba(220, 38, 38, 95);
 }
 
 QPushButton[text*="删除"]:pressed,
 QPushButton[text*="清除"]:pressed,
 QPushButton[text*="移除"]:pressed {
-    background-color: #8b2327;
-    border: 3px solid #5a1519;
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ffd9dd, stop:1 #fff1f2);
+    color: rgba(127, 29, 29, 240);
+    border: 1px solid rgba(220, 38, 38, 110);
 }
 
 /* 成功/确认操作按钮使用绿色 */
@@ -93,8 +191,9 @@ QPushButton[text*="执行"],
 QPushButton[text*="开始"],
 QPushButton[text*="启动"],
 QPushButton[text*="保存"] {
-    background-color: #107c10;
-    border: 3px solid #0a5a0a;
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #e7f1ff, stop:1 #dbeafe);
+    color: rgba(0, 47, 122, 230);
+    border: 1px solid rgba(0, 122, 255, 90);
 }
 
 QPushButton[text*="发送"]:hover,
@@ -102,9 +201,9 @@ QPushButton[text*="执行"]:hover,
 QPushButton[text*="开始"]:hover,
 QPushButton[text*="启动"]:hover,
 QPushButton[text*="保存"]:hover {
-    background-color: #0e6b0e;
-    border: 3px solid #084908;
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #138d13, stop:1 #0a5a0a);
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #f0f7ff, stop:1 #d6e9ff);
+    color: rgba(0, 47, 122, 240);
+    border: 1px solid rgba(0, 122, 255, 120);
 }
 
 QPushButton[text*="发送"]:pressed,
@@ -112,34 +211,35 @@ QPushButton[text*="执行"]:pressed,
 QPushButton[text*="开始"]:pressed,
 QPushButton[text*="启动"]:pressed,
 QPushButton[text*="保存"]:pressed {
-    background-color: #0a5a0a;
-    border: 3px solid #063806;
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #d6e9ff, stop:1 #f0f7ff);
+    color: rgba(0, 47, 122, 240);
+    border: 1px solid rgba(0, 122, 255, 150);
 }
 
 /* 输入框和文本区域 */
 QLineEdit, QTextEdit, QPlainTextEdit {
-    background-color: rgba(255, 255, 255, 0.95);
-    border: 1px solid #cccccc;
-    border-radius: 3px;
+    background-color: rgba(255, 255, 255, 245);
+    border: 1px solid rgba(0, 0, 0, 14);
+    border-radius: 10px;
     padding: 5px;
-    color: #333333;
+    color: rgba(17, 24, 39, 235);
 }
 
 QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus {
-    border: 2px solid #0078d4;
+    border: 1px solid rgba(0, 122, 255, 170);
 }
 
 /* 下拉框 */
 QComboBox {
-    background-color: rgba(255, 255, 255, 0.95);
-    border: 1px solid #cccccc;
-    border-radius: 3px;
+    background-color: rgba(255, 255, 255, 245);
+    border: 1px solid rgba(0, 0, 0, 14);
+    border-radius: 10px;
     padding: 5px;
-    color: #333333;
+    color: rgba(17, 24, 39, 235);
 }
 
 QComboBox:hover {
-    border: 1px solid #0078d4;
+    border: 1px solid rgba(0, 122, 255, 170);
 }
 
 QComboBox::drop-down {
@@ -149,65 +249,120 @@ QComboBox::drop-down {
 
 /* 列表和表格 */
 QListWidget, QTableWidget {
-    background-color: rgba(255, 255, 255, 0.95);
-    border: 1px solid #cccccc;
-    border-radius: 3px;
-    color: #333333;
+    background-color: rgba(255, 255, 255, 235);
+    border: 1px solid rgba(0, 0, 0, 14);
+    border-radius: 10px;
+    color: rgba(17, 24, 39, 235);
+}
+
+QTableWidget::item:selected {
+    background-color: rgba(0, 122, 255, 36);
+    color: rgba(17, 24, 39, 235);
+}
+
+QTableWidget::item:hover {
+    background-color: rgba(255, 149, 0, 22);
+}
+
+QHeaderView::section {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ffffff, stop:1 #eef1f4);
+    color: rgba(17, 24, 39, 210);
+    border: 1px solid rgba(0, 0, 0, 12);
+    padding: 8px 10px;
+    border-radius: 8px;
+}
+
+QTableWidget {
+    alternate-background-color: rgba(243, 244, 246, 210);
+}
+
+/* 指纹映射模块：更亮、更活跃的局部主题 */
+#FingerprintMappingTab {
+    background-color: rgba(243, 244, 246, 235);
+    border-radius: 12px;
+}
+
+#FingerprintMappingTab QGroupBox {
+    background-color: rgba(245, 246, 248, 235);
+    border: 1px solid rgba(0, 0, 0, 14);
+    border-radius: 12px;
+    color: rgba(17, 24, 39, 235);
+}
+
+#FingerprintMappingTab QGroupBox::title {
+    color: rgba(0, 122, 255, 220);
+}
+
+#MappingTable {
+    background-color: rgba(255, 255, 255, 245);
+    color: rgba(17, 24, 39, 235);
+    border: 1px solid rgba(0, 0, 0, 14);
+    border-radius: 12px;
+    gridline-color: rgba(0, 0, 0, 12);
+}
+
+#MappingTable::item:selected {
+    background-color: rgba(0, 122, 255, 40);
+    color: rgba(17, 24, 39, 235);
+}
+
+#MappingTable::item:hover {
+    background-color: rgba(255, 149, 0, 35);
 }
 
 /* 分组框 */
 QGroupBox {
-    background-color: rgba(255, 255, 255, 0.85);
-    border: 2px solid #cccccc;
-    border-radius: 5px;
+    background-color: rgba(245, 246, 248, 235);
+    border: 1px solid rgba(0, 0, 0, 14);
+    border-radius: 12px;
     margin-top: 10px;
     padding-top: 10px;
     font-weight: bold;
-    color: #333333;
+    color: rgba(17, 24, 39, 235);
 }
 
 QGroupBox::title {
     subcontrol-origin: margin;
     subcontrol-position: top left;
     padding: 0 5px;
-    color: #0066cc;
+    color: rgba(0, 122, 255, 210);
 }
 
 /* 标签 */
 QLabel {
-    color: #333333;
+    color: rgba(17, 24, 39, 235);
     background-color: transparent;
 }
 
 /* 滚动条 */
 QScrollBar:vertical {
-    background-color: rgba(240, 240, 240, 0.8);
+    background-color: rgba(243, 244, 246, 220);
     width: 12px;
     border-radius: 6px;
 }
 
 QScrollBar::handle:vertical {
-    background-color: rgba(150, 150, 150, 0.8);
+    background-color: rgba(156, 163, 175, 130);
     border-radius: 6px;
     min-height: 20px;
 }
 
 QScrollBar::handle:vertical:hover {
-    background-color: rgba(120, 120, 120, 0.9);
+    background-color: rgba(156, 163, 175, 170);
 }
 
 QScrollBar:horizontal {
-    background-color: rgba(240, 240, 240, 0.8);
+    background-color: rgba(243, 244, 246, 220);
     height: 12px;
     border-radius: 6px;
 }
 
 QScrollBar::handle:horizontal {
-    background-color: rgba(150, 150, 150, 0.8);
+    background-color: rgba(156, 163, 175, 130);
     border-radius: 6px;
     min-width: 20px;
 }
 
 QScrollBar::handle:horizontal:hover {
-    background-color: rgba(120, 120, 120, 0.9);
+    background-color: rgba(156, 163, 175, 170);
 }

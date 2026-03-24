@@ -17,6 +17,8 @@ import subprocess
 from pathlib import Path
 import json
 
+from typing import Optional
+
 # 添加当前目录到Python路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, current_dir)
@@ -28,9 +30,10 @@ try:
                                  QComboBox, QSpinBox, QGroupBox, QFormLayout,
                                  QProgressBar, QListWidget, QListWidgetItem, QSplitter, QTableWidget,
                                  QTableWidgetItem, QHeaderView, QDialog, QDialogButtonBox,
-                                 QInputDialog, QMenu, QCheckBox)
-    from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
-    from PyQt5.QtGui import QFont, QTextCursor, QPixmap, QPalette, QBrush
+                                 QInputDialog, QMenu, QCheckBox, QFrame)
+    from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QEvent, QSize, QPropertyAnimation, QEasingCurve, QPoint
+    from PyQt5.QtGui import QFont, QTextCursor, QPixmap, QPalette, QBrush, QPainter, QColor, QPen, QConicalGradient, QIcon
+    from PyQt5.QtWidgets import QGraphicsOpacityEffect, QGraphicsDropShadowEffect
     PYQT5_AVAILABLE = True
 except ImportError:
     PYQT5_AVAILABLE = False
@@ -87,10 +90,208 @@ from src.ai import AIManager
 from src.gui.ui_helper import UIHelper
 
 
+# UI 主题开关：新拟态风格默认关闭赛博朋克动效背景
+ENABLE_AMBIENT_LAYER = False
+
+
+def _make_shadow(color: QColor, blur: int, x: int, y: int) -> QGraphicsDropShadowEffect:
+    eff = QGraphicsDropShadowEffect()
+    eff.setBlurRadius(blur)
+    eff.setOffset(x, y)
+    eff.setColor(color)
+    return eff
+
+
+def apply_neumorphic_shadow(widget: QWidget, mode: str = "raised") -> None:
+    """Apply a soft neumorphic shadow.
+
+    mode:
+      - raised: outer shadow
+      - pressed: inner/pressed illusion (implemented by reducing shadow)
+    """
+    try:
+        if mode == "raised":
+            # warm shadow bottom-right
+            warm = _make_shadow(QColor(0, 0, 0, 40), 28, 6, 6)
+            widget.setGraphicsEffect(warm)
+        elif mode == "pressed":
+            pressed = _make_shadow(QColor(0, 0, 0, 18), 16, 2, 2)
+            widget.setGraphicsEffect(pressed)
+        else:
+            widget.setGraphicsEffect(None)
+    except Exception:
+        pass
+
+
+def bind_neumorphic_press_feedback(btn: QPushButton) -> None:
+    """Make button press feel more realistic by toggling shadow and a property."""
+    try:
+        apply_neumorphic_shadow(btn, "raised")
+        btn.setProperty("pressed", "false")
+
+        def _on_pressed():
+            btn.setProperty("pressed", "true")
+            apply_neumorphic_shadow(btn, "pressed")
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+            btn.update()
+
+        def _on_released():
+            btn.setProperty("pressed", "false")
+            apply_neumorphic_shadow(btn, "raised")
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+            btn.update()
+
+        btn.pressed.connect(_on_pressed)
+        btn.released.connect(_on_released)
+    except Exception:
+        pass
+
+
+class RotatingHalo(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._angle = 0.0
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._tick)
+        self._timer.start(33)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+
+    def _tick(self):
+        self._angle = (self._angle + 1.5) % 360
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        w = self.width()
+        h = self.height()
+        size = min(w, h)
+        if size <= 10:
+            return
+
+        center = self.rect().center()
+        radius = size * 0.44
+
+        grad = QConicalGradient(center, self._angle)
+        grad.setColorAt(0.0, QColor(34, 211, 238, 160))
+        grad.setColorAt(0.25, QColor(245, 158, 11, 170))
+        grad.setColorAt(0.55, QColor(168, 85, 247, 150))
+        grad.setColorAt(0.8, QColor(236, 72, 153, 130))
+        grad.setColorAt(1.0, QColor(34, 211, 238, 160))
+
+        pen = QPen()
+        pen.setWidthF(max(2.0, size * 0.02))
+        pen.setBrush(grad)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+
+        painter.drawEllipse(center, int(radius), int(radius))
+
+
+class AmbientLayer(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setAutoFillBackground(False)
+
+        self._orbs = []
+
+        # Orb 1 (amber/orange)
+        orb1 = QFrame(self)
+        orb1.setStyleSheet(
+            "QFrame {"
+            "background: qradialgradient(cx:0.3, cy:0.3, radius:0.8, "
+            "stop:0 rgba(245,158,11,70), stop:0.55 rgba(249,115,22,32), stop:1 rgba(249,115,22,0));"
+            "border-radius: 48px;"
+            "}"
+        )
+        orb1.setFixedSize(96, 96)
+        eff1 = QGraphicsOpacityEffect(orb1)
+        orb1.setGraphicsEffect(eff1)
+        self._animate_opacity(eff1, 0.35, 0.9, 1400)
+        self._animate_float(orb1, QPoint(40, 90), QPoint(40, 60), 3000)
+        self._orbs.append(orb1)
+
+        # Orb 2 (purple/pink)
+        orb2 = QFrame(self)
+        orb2.setStyleSheet(
+            "QFrame {"
+            "background: qradialgradient(cx:0.6, cy:0.4, radius:0.9, "
+            "stop:0 rgba(168,85,247,60), stop:0.55 rgba(236,72,153,30), stop:1 rgba(236,72,153,0));"
+            "border-radius: 60px;"
+            "}"
+        )
+        orb2.setFixedSize(120, 120)
+        eff2 = QGraphicsOpacityEffect(orb2)
+        orb2.setGraphicsEffect(eff2)
+        self._animate_opacity(eff2, 0.25, 0.85, 1800)
+        self._animate_float(orb2, QPoint(760, 140), QPoint(760, 180), 3200)
+        self._orbs.append(orb2)
+
+        # Orb 3 (cyan/blue)
+        orb3 = QFrame(self)
+        orb3.setStyleSheet(
+            "QFrame {"
+            "background: qradialgradient(cx:0.5, cy:0.5, radius:0.9, "
+            "stop:0 rgba(34,211,238,55), stop:0.55 rgba(59,130,246,26), stop:1 rgba(59,130,246,0));"
+            "border-radius: 50px;"
+            "}"
+        )
+        orb3.setFixedSize(100, 100)
+        eff3 = QGraphicsOpacityEffect(orb3)
+        orb3.setGraphicsEffect(eff3)
+        self._animate_opacity(eff3, 0.2, 0.75, 1600)
+        self._animate_float(orb3, QPoint(180, 520), QPoint(210, 500), 2800)
+        self._orbs.append(orb3)
+
+        # Rotating halo
+        self.halo = RotatingHalo(self)
+        self.halo.setFixedSize(220, 220)
+        self.halo.move(880, 460)
+        eff_halo = QGraphicsOpacityEffect(self.halo)
+        self.halo.setGraphicsEffect(eff_halo)
+        self._animate_opacity(eff_halo, 0.15, 0.55, 2000)
+
+    def _animate_opacity(self, effect: QGraphicsOpacityEffect, start: float, end: float, duration_ms: int):
+        anim = QPropertyAnimation(effect, b"opacity", self)
+        anim.setDuration(duration_ms)
+        anim.setStartValue(start)
+        anim.setEndValue(end)
+        anim.setLoopCount(-1)
+        anim.setEasingCurve(QEasingCurve.InOutQuad)
+        anim.start()
+
+    def _animate_float(self, widget: QWidget, p1, p2, duration_ms: int):
+        anim = QPropertyAnimation(widget, b"pos", self)
+        anim.setDuration(duration_ms)
+        anim.setStartValue(p1)
+        anim.setEndValue(p2)
+        anim.setLoopCount(-1)
+        anim.setEasingCurve(QEasingCurve.InOutQuad)
+        anim.start()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # Keep halo near bottom-right with padding
+        try:
+            pad = 30
+            self.halo.move(max(0, self.width() - self.halo.width() - pad), max(0, self.height() - self.halo.height() - pad))
+        except Exception:
+            pass
+
+
 def build_fingerprint_tab(manager: 'FingerprintCVEManager'):
     """构建独立的指纹-CVE映射标签页（模块化，避免类方法依赖问题）"""
     widget = QWidget()
+    widget.setObjectName("FingerprintMappingTab")
     layout = QVBoxLayout()
+    layout.setContentsMargins(16, 16, 16, 16)
+    layout.setSpacing(12)
 
     # 输入区域
     input_group = QGroupBox("添加/更新映射")
@@ -122,30 +323,111 @@ def build_fingerprint_tab(manager: 'FingerprintCVEManager'):
     button_layout.addStretch()
     layout.addLayout(button_layout)
 
-    # 列表区域
-    list_group = QGroupBox("映射列表")
-    list_layout = QVBoxLayout()
-    fp_list_widget = QListWidget()
-    fp_list_widget.setFont(QFont("Consolas", 9))
-    list_layout.addWidget(fp_list_widget)
-    list_group.setLayout(list_layout)
-    layout.addWidget(list_group)
+    # 表格区域
+    table_group = QGroupBox("映射列表")
+    table_layout = QVBoxLayout()
+
+    # 快速筛选栏
+    filter_row = QHBoxLayout()
+    fp_filter_input = QLineEdit()
+    fp_filter_input.setObjectName("MappingFilter")
+    fp_filter_input.setPlaceholderText("筛选：输入指纹、CVE或描述关键字…")
+    fp_filter_clear = QPushButton("清空筛选")
+    fp_filter_clear.setObjectName("TopAction")
+    try:
+        bind_neumorphic_press_feedback(fp_filter_clear)
+    except Exception:
+        pass
+    fp_count_label = QLabel("0 条")
+    fp_count_label.setObjectName("UserHint")
+    filter_row.addWidget(fp_filter_input, stretch=1)
+    filter_row.addWidget(fp_filter_clear)
+    filter_row.addWidget(fp_count_label)
+    table_layout.addLayout(filter_row)
+
+    fp_table = QTableWidget()
+    fp_table.setObjectName("MappingTable")
+    fp_table.setColumnCount(3)
+    fp_table.setHorizontalHeaderLabels(["指纹", "CVE编号", "描述"])
+    fp_table.setSortingEnabled(True)
+    fp_table.setAlternatingRowColors(True)
+    fp_table.setSelectionBehavior(QTableWidget.SelectRows)
+    fp_table.setSelectionMode(QTableWidget.SingleSelection)
+    fp_table.setEditTriggers(QTableWidget.NoEditTriggers)
+    try:
+        fp_table.horizontalHeader().setStretchLastSection(True)
+        fp_table.horizontalHeader().setSortIndicatorShown(True)
+        fp_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        fp_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        fp_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+    except Exception:
+        pass
+    fp_table.verticalHeader().setVisible(False)
+    fp_table.setWordWrap(False)
+
+    table_layout.addWidget(fp_table)
+    table_group.setLayout(table_layout)
+    layout.addWidget(table_group)
 
     # 回调实现
     def refresh_list():
-        fp_list_widget.clear()
+        fp_table.setRowCount(0)
         try:
             mappings = manager.get_all_mappings()
             if not mappings:
-                fp_list_widget.addItem("暂无映射")
+                fp_table.setRowCount(1)
+                item = QTableWidgetItem("暂无映射")
+                item.setFlags(Qt.ItemIsEnabled)
+                fp_table.setItem(0, 0, item)
+                fp_table.setSpan(0, 0, 1, 3)
+                fp_count_label.setText("0 条")
             else:
-                for mapping in mappings:
-                    item_text = f"指纹: {mapping.fingerprint}\nCVE: {mapping.cve_id or '(无CVE)'}"
-                    if mapping.description:
-                        item_text += f"\n描述: {mapping.description}"
-                    fp_list_widget.addItem(item_text)
+                fp_table.setRowCount(len(mappings))
+                for row, mapping in enumerate(mappings):
+                    fp_item = QTableWidgetItem(str(mapping.fingerprint))
+                    cve_item = QTableWidgetItem(str(mapping.cve_id or ""))
+                    desc_item = QTableWidgetItem(str(mapping.description or ""))
+                    fp_item.setFont(QFont("Consolas", 9))
+                    fp_table.setItem(row, 0, fp_item)
+                    fp_table.setItem(row, 1, cve_item)
+                    fp_table.setItem(row, 2, desc_item)
+                fp_count_label.setText(f"{len(mappings)} 条")
         except Exception as e:
-            fp_list_widget.addItem(f"[!] 刷新失败: {e}")
+            fp_table.setRowCount(1)
+            item = QTableWidgetItem(f"[!] 刷新失败: {e}")
+            item.setFlags(Qt.ItemIsEnabled)
+            fp_table.setItem(0, 0, item)
+            fp_table.setSpan(0, 0, 1, 3)
+            fp_count_label.setText("0 条")
+
+        # Apply filter after refresh
+        try:
+            apply_filter(fp_filter_input.text().strip())
+        except Exception:
+            pass
+
+    def apply_filter(keyword: str):
+        keyword = (keyword or "").lower()
+        visible = 0
+        for r in range(fp_table.rowCount()):
+            fp_it = fp_table.item(r, 0)
+            if fp_it is not None and fp_it.text() in ("暂无映射", "[!] 刷新失败"):
+                fp_table.setRowHidden(r, False)
+                continue
+            row_text = []
+            for c in range(3):
+                it = fp_table.item(r, c)
+                if it is not None:
+                    row_text.append(it.text())
+            hay = " ".join(row_text).lower()
+            show = (keyword == "") or (keyword in hay)
+            fp_table.setRowHidden(r, not show)
+            if show:
+                visible += 1
+        if fp_table.rowCount() == 1 and fp_table.item(0, 0) is not None and fp_table.item(0, 0).text() == "暂无映射":
+            fp_count_label.setText("0 条")
+        else:
+            fp_count_label.setText(f"{visible} 条")
 
     def add_mapping_cb():
         fp = fp_fingerprint_input.text().strip()
@@ -168,14 +450,13 @@ def build_fingerprint_tab(manager: 'FingerprintCVEManager'):
             UIHelper.show_error(widget, "错误", f"添加失败: {e}")
 
     def remove_mapping_cb():
-        current = fp_list_widget.currentItem()
-        if not current:
+        row = fp_table.currentRow()
+        if row < 0:
             UIHelper.show_warning(widget, "警告", "请先选择要删除的映射")
             return
-        text = current.text()
-        if "指纹:" in text:
-            fingerprint = text.split("指纹:")[1].split("\n")[0].strip()
-        else:
+        fingerprint_item = fp_table.item(row, 0)
+        fingerprint = fingerprint_item.text().strip() if fingerprint_item else ""
+        if not fingerprint or fingerprint == "暂无映射":
             UIHelper.show_warning(widget, "警告", "无法解析指纹信息")
             return
         if UIHelper.show_question(widget, "确认", f"确定要删除指纹 {fingerprint} 的映射吗？"):
@@ -188,9 +469,25 @@ def build_fingerprint_tab(manager: 'FingerprintCVEManager'):
             except Exception as e:
                 UIHelper.show_error(widget, "错误", f"删除失败: {e}")
 
+    def on_table_row_clicked(r: int, c: int):
+        try:
+            fp = fp_table.item(r, 0).text().strip() if fp_table.item(r, 0) else ""
+            cve = fp_table.item(r, 1).text().strip() if fp_table.item(r, 1) else ""
+            desc = fp_table.item(r, 2).text().strip() if fp_table.item(r, 2) else ""
+            if fp and fp != "暂无映射":
+                fp_fingerprint_input.setText(fp)
+                fp_cve_input.setText(cve)
+                fp_description_input.setText(desc)
+        except Exception:
+            pass
+
+    fp_table.cellClicked.connect(on_table_row_clicked)
     fp_add_btn.clicked.connect(add_mapping_cb)
     fp_remove_btn.clicked.connect(remove_mapping_cb)
     fp_refresh_btn.clicked.connect(refresh_list)
+
+    fp_filter_input.textChanged.connect(lambda t: apply_filter(t))
+    fp_filter_clear.clicked.connect(lambda: fp_filter_input.setText(""))
 
     refresh_list()
     widget.setLayout(layout)
@@ -203,29 +500,145 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.manager = PayloadManager(debug=False)
+        self._scroll_accumulated_px = 0
+        self._nav_scrolled = False
+        self._status_pulse_anim = None
         self.init_ui()
     
+    def eventFilter(self, obj, event):
+        try:
+            if event.type() == QEvent.Wheel:
+                # angleDelta().y() is usually 120 per notch.
+                dy = event.angleDelta().y()
+                # Convert to a coarse pixel-like unit to match the 50px threshold UX.
+                step = int(abs(dy) / 120 * 20) if dy != 0 else 0
+                if dy < 0:
+                    self._scroll_accumulated_px += step
+                elif dy > 0:
+                    self._scroll_accumulated_px = max(0, self._scroll_accumulated_px - step)
+                self._update_nav_scrolled_state(self._scroll_accumulated_px >= 50)
+        except Exception:
+            pass
+        return super().eventFilter(obj, event)
+
+    def _update_nav_scrolled_state(self, scrolled: bool):
+        if self._nav_scrolled == scrolled:
+            return
+        self._nav_scrolled = scrolled
+        if hasattr(self, "top_nav") and self.top_nav is not None:
+            try:
+                self.top_nav.setProperty("scrolled", "true" if scrolled else "false")
+                self.top_nav.style().unpolish(self.top_nav)
+                self.top_nav.style().polish(self.top_nav)
+                self.top_nav.update()
+            except Exception:
+                pass
+
+    def _build_top_nav(self) -> QWidget:
+        nav = QFrame()
+        nav.setObjectName("TopNav")
+        nav.setProperty("scrolled", "false")
+
+        layout = QHBoxLayout()
+        layout.setContentsMargins(14, 10, 14, 10)
+        layout.setSpacing(12)
+
+        # Brand block
+        brand_wrap = QFrame()
+        brand_layout = QHBoxLayout()
+        brand_layout.setContentsMargins(0, 0, 0, 0)
+        brand_layout.setSpacing(8)
+
+        brand = QLabel("CVE-Payload")
+        brand.setObjectName("BrandLabel")
+        brand.setFont(QFont("Microsoft YaHei", 11))
+
+        status_dot = QFrame()
+        status_dot.setObjectName("StatusDot")
+        status_dot.setFixedSize(QSize(12, 12))
+
+        brand_layout.addWidget(brand)
+        brand_layout.addWidget(status_dot)
+        brand_wrap.setLayout(brand_layout)
+
+        # Search
+        search = QLineEdit()
+        search.setObjectName("TopSearch")
+        search.setPlaceholderText("搜索模块、CVE或目标地址…")
+        search.setMinimumWidth(320)
+
+        # Action buttons
+        def _mk_action(text: str, tooltip: str) -> QPushButton:
+            b = QPushButton(text)
+            b.setObjectName("TopAction")
+            b.setToolTip(tooltip)
+            b.setMinimumWidth(72)
+            bind_neumorphic_press_feedback(b)
+            return b
+
+        btn_settings = _mk_action("设置", "配置APIKey、默认超时等")
+        btn_export = _mk_action("导出", "导出结果与日志")
+        btn_help = _mk_action("帮助", "打开使用说明")
+
+        # User pill
+        user_pill = QFrame()
+        user_pill.setObjectName("UserPill")
+        user_layout = QHBoxLayout()
+        user_layout.setContentsMargins(10, 6, 10, 6)
+        user_layout.setSpacing(8)
+
+        avatar = QFrame()
+        avatar.setObjectName("AvatarDot")
+        avatar.setFixedSize(18, 18)
+
+        user_name = QLabel("本地用户")
+        user_name.setObjectName("UserName")
+        user_name.setFont(QFont("Microsoft YaHei", 9))
+
+        online = QLabel("在线")
+        online.setObjectName("UserHint")
+        online.setFont(QFont("Microsoft YaHei", 9))
+
+        user_layout.addWidget(avatar)
+        user_layout.addWidget(user_name)
+        user_layout.addWidget(online)
+        user_pill.setLayout(user_layout)
+
+        layout.addWidget(brand_wrap)
+        layout.addWidget(search, stretch=1)
+        layout.addWidget(btn_settings)
+        layout.addWidget(btn_export)
+        layout.addWidget(btn_help)
+        layout.addWidget(user_pill)
+        nav.setLayout(layout)
+
+        # Pulse animation via opacity effect
+        try:
+            eff = QGraphicsOpacityEffect(status_dot)
+            status_dot.setGraphicsEffect(eff)
+            anim = QPropertyAnimation(eff, b"opacity", status_dot)
+            anim.setDuration(1200)
+            anim.setStartValue(0.35)
+            anim.setEndValue(1.0)
+            anim.setLoopCount(-1)
+            anim.setEasingCurve(QEasingCurve.InOutQuad)
+            anim.start()
+            self._status_pulse_anim = anim
+        except Exception:
+            pass
+
+        # Top bar shadow
+        apply_neumorphic_shadow(nav, "raised")
+
+        return nav
+
     def init_ui(self):
         """初始化界面"""
         self.setWindowTitle("CVE Payload 工具 - GUI")
         self.setGeometry(100, 100, 1200, 800)
 
-        # 设置背景图片（使用QPalette，比QSS更可靠）
-        bg_image_path = os.path.join(current_dir, "assets", "background.jpg")
-        if os.path.exists(bg_image_path):
-            try:
-                pixmap = QPixmap(bg_image_path)
-                if not pixmap.isNull():
-                    # 缩放图片以适应窗口，保持宽高比
-                    scaled_pixmap = pixmap.scaled(self.size(), Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
-                    palette = QPalette()
-                    palette.setBrush(QPalette.Window, QBrush(scaled_pixmap))
-                    self.setPalette(palette)
-                    self.setAutoFillBackground(True)
-                else:
-                    print(f"[!] Failed to load background image: {bg_image_path}", file=sys.stderr)
-            except Exception as e:
-                print(f"[!] Error setting background image: {e}", file=sys.stderr)
+        # 赛博朋克主题使用 QSS 的深空渐变背景，这里不再强制覆盖背景图片。
+        # 如需恢复背景图片，可在 style.qss 中单独配置或在此处加开关。
 
         # 加载样式表
         style_path = os.path.join(current_dir, "assets", "style.qss")
@@ -317,7 +730,61 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
 
-        self.setCentralWidget(tabs)
+        # 顶部导航 + 主内容 + 背景动效层
+        container = QWidget()
+        container.setObjectName("RootContainer")
+
+        self.ambient_layer = None
+        if ENABLE_AMBIENT_LAYER:
+            self.ambient_layer = AmbientLayer(container)
+            self.ambient_layer.lower()
+
+        container_layout = QVBoxLayout()
+        container_layout.setContentsMargins(14, 14, 14, 14)
+        container_layout.setSpacing(12)
+
+        self.top_nav = self._build_top_nav()
+        container_layout.addWidget(self.top_nav)
+        container_layout.addWidget(tabs, stretch=1)
+        container.setLayout(container_layout)
+        self.setCentralWidget(container)
+
+        # Make ambient layer follow container size
+        try:
+            if self.ambient_layer is not None:
+                self.ambient_layer.setGeometry(container.rect())
+        except Exception:
+            pass
+
+        # 全局滚动监听，用于 50px 阈值切换导航栏状态
+        try:
+            QApplication.instance().installEventFilter(self)
+        except Exception:
+            pass
+
+        # Neumorphic shadows and press feedback for key widgets
+        try:
+            # Buttons
+            for btn in self.findChildren(QPushButton):
+                bind_neumorphic_press_feedback(btn)
+
+            # GroupBoxes as cards
+            for gb in self.findChildren(QGroupBox):
+                apply_neumorphic_shadow(gb, "raised")
+
+            # Tabs pane
+            apply_neumorphic_shadow(tabs, "raised")
+        except Exception:
+            pass
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        try:
+            if hasattr(self, "ambient_layer") and self.ambient_layer is not None:
+                self.ambient_layer.setGeometry(self.centralWidget().rect())
+                self.ambient_layer.lower()
+        except Exception:
+            pass
 
     def create_ai_console_tab(self):
         """
