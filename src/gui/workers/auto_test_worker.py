@@ -54,7 +54,7 @@ class AutoTestWorker(QThread):
         total_cves = 0
         try:
             from urllib.parse import urlparse
-            from src.core.fingerprint import get_css_files_md5_from_page
+            from src.core.fingerprint import get_css_files_md5_from_page, get_page_feature_fingerprint
             from src.core.payload_sender import PayloadManager
             from src.core.port_scanner import scan_ports
 
@@ -160,31 +160,61 @@ class AutoTestWorker(QThread):
                         self.finished.emit(success_count, total_cves)
                         return
 
-                    if not css_md5_dict:
-                        self._log(f"    [-] {url_for_fp} 未提取到 CSS 或访问失败", force=True)
-                        continue
+                    # If CSS fingerprint found CVEs, use them
+                    if css_md5_dict:
+                        self._log(f"    [DEBUG] found {len(css_md5_dict)} CSS resources", force=True)
 
-                    self._log(f"    [DEBUG] 识别到 {len(css_md5_dict)} 个 CSS 资源", force=True)
+                        for css_url, info in css_md5_dict.items():
+                            if isinstance(info, tuple):
+                                md5_hash, cve_id = info
+                            else:
+                                md5_hash, cve_id = info, None
 
-                    for css_url, info in css_md5_dict.items():
-                        if isinstance(info, tuple):
-                            md5_hash, cve_id = info
-                        else:
-                            md5_hash, cve_id = info, None
+                            self._log(f"    [DEBUG] CSS: {css_url}", force=True)
+                            self._log(f"    [DEBUG]   MD5: {md5_hash}", force=True)
+                            self._log(f"    [DEBUG]   CVE: {cve_id}", force=True)
 
-                        self._log(f"    [DEBUG] CSS: {css_url}", force=True)
-                        self._log(f"    [DEBUG]   MD5: {md5_hash}", force=True)
-                        self._log(f"    [DEBUG]   CVE: {cve_id}", force=True)
+                            if md5_hash and cve_id:
+                                self._log(f"        [+] {css_url} -> CVE: {cve_id}", force=True)
+                                matched_cves_per_port.setdefault(cve_id, set()).add(port)
+                            else:
+                                if not md5_hash:
+                                    self._log(f"    [DEBUG]   warning: MD5 empty", force=True)
+                                if not cve_id:
+                                    self._log(f"    [DEBUG]   warning: CVE empty (fingerprint not in mapping)", force=True)
 
-                        if md5_hash and cve_id:
-                            # 简洁模式下不显示每个 CSS 文件的 MD5，只在详细模式显示
-                            self._log(f"        [+] {css_url} → CVE: {cve_id}", force=True)
-                            matched_cves_per_port.setdefault(cve_id, set()).add(port)
-                        else:
-                            if not md5_hash:
-                                self._log(f"    [DEBUG]   ⚠ MD5 为空", force=True)
-                            if not cve_id:
-                                self._log(f"    [DEBUG]   ⚠ CVE 为空（指纹未在映射库中找到）", force=True)
+                    # If no CSS CVEs found, try page feature fingerprint
+                    css_found_cve = False
+                    if css_md5_dict:
+                        for info in css_md5_dict.values():
+                            if isinstance(info, tuple) and info[1]:  # has CVE
+                                css_found_cve = True
+                                break
+
+                    if not css_md5_dict or not css_found_cve:
+                        self._log(f"    [*] CSS fingerprint failed or no CVE matched, trying page feature fingerprint...", force=True)
+
+                        try:
+                            page_fp = get_page_feature_fingerprint(url_for_fp, self.fp_timeout)
+                            matched_from_features = page_fp.get('matched_cves', [])
+
+                            if matched_from_features:
+                                features = page_fp.get('features', {})
+                                self._log(f"    [+] Page title: {features.get('title', 'N/A')}", force=True)
+                                self._log(f"    [+] Forms found: {len(features.get('forms', []))}", force=True)
+
+                                for match in matched_from_features:
+                                    cve_id = match.get('cve_id')
+                                    confidence = match.get('confidence', 'unknown')
+                                    reason = match.get('reason', '')
+                                    if cve_id:
+                                        self._log(f"        [+] Page feature matched -> CVE: {cve_id} (confidence: {confidence})", force=True)
+                                        self._log(f"            Reason: {reason}", force=True)
+                                        matched_cves_per_port.setdefault(cve_id, set()).add(port)
+                            else:
+                                self._log(f"    [-] {url_for_fp} page feature fingerprint found no CVE", force=True)
+                        except Exception as e:
+                            self._log(f"    [!] Page feature fingerprint error: {e}", force=True)
                 except Exception as e:
                     self._log(f"    [!] 指纹识别出错 ({base_host}:{port}): {e}", force=True)
 

@@ -332,6 +332,7 @@ class PayloadManager:
             url = self._normalize_url(payload_data.get("url", ""), ip_port, headers)
             data = payload_data.get("data", None)
             method = payload_data.get("method", "POST").upper()
+            needs_verify = payload_data.get("_needs_verify", False)
             
             log(f"[+] Payload 生成成功")
             log(f"    模块: {module_name}")
@@ -341,25 +342,57 @@ class PayloadManager:
             log(f"    命令: {cmd}")
             
             log(f"[*] 发送请求...")
-            if method == "GET":
-                response = requests.get(url, headers=headers, params=data, timeout=timeout)
-            elif method == "POST":
-                response = requests.post(url, headers=headers, data=data, timeout=timeout)
-            elif method == "PUT":
-                response = requests.put(url, headers=headers, data=data, timeout=timeout)
-            else:
-                response = requests.request(method, url, headers=headers, data=data, timeout=timeout)
+            response = None
+            timeout_occurred = False
             
-            log(f"[+] 收到响应，状态码: {response.status_code}")
-            log(f"[+] 响应体:")
-            log(response.text)
+            try:
+                if method == "GET":
+                    response = requests.get(url, headers=headers, params=data, timeout=timeout)
+                elif method == "POST":
+                    response = requests.post(url, headers=headers, data=data, timeout=timeout)
+                elif method == "PUT":
+                    response = requests.put(url, headers=headers, data=data, timeout=timeout)
+                else:
+                    response = requests.request(method, url, headers=headers, data=data, timeout=timeout)
+                
+                log(f"[+] 收到响应，状态码: {response.status_code}")
+                log(f"[+] 响应体:")
+                log(response.text)
+                
+            except requests.exceptions.Timeout:
+                timeout_occurred = True
+                log(f"[!] 请求超时 ({timeout}s) - 这可能是某些漏洞的预期行为")
+            
+            # 针对CVE-2016-10033和类似漏洞，验证shell创建
+            if needs_verify and hasattr(module, 'verify'):
+                log(f"[*] 验证漏洞利用结果...")
+                # 等待一会儿，让shell创建
+                import time
+                time.sleep(1)
+                
+                success, output = module.verify(normalized_ip_port, cmd)
+                if success:
+                    log(f"[+] 漏洞利用成功！shell验证通过。")
+                    if output:
+                        log(f"[+] 命令输出: {output}")
+                    # 创建一个假的response对象，用于兼容性
+                    class FakeResponse:
+                        def __init__(self, text, status_code=200):
+                            self.text = text
+                            self.status_code = status_code
+                    return FakeResponse(f"www-data\n{output}" if output else "www-data")
+                else:
+                    log(f"[-] shell验证失败")
+                    return None
+            
+            # 如果超时且没有verify函数，返回None
+            if timeout_occurred:
+                return None
             
             return response
+            
         except FileNotFoundError as e:
             log(f"[!] 模块不存在: {e}")
-            return None
-        except requests.exceptions.Timeout:
-            log(f"[!] 请求超时（{timeout}秒）")
             return None
         except requests.exceptions.ConnectionError as e:
             log(f"[!] 连接错误: {e}")

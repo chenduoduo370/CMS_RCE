@@ -23,5 +23,10 @@
     "fingerprint": "9ec0a71921d6f6caf86a911f0e0b33dd",
     "cve_id": "CVE_2018_7600",
     "description": null
+  },
+  "PLACEHOLDER_PHPMAILER_CSS_MD5": {
+    "fingerprint": "PLACEHOLDER_PHPMAILER_CSS_MD5",
+    "cve_id": "CVE-2016-10033",
+    "description": "PHPMailer RCE via file upload - replace with actual MD5 from target"
   }
 }

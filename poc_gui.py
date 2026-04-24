@@ -16,11 +16,16 @@ import os
 import subprocess
 from pathlib import Path
 import json
+import time
 
 from typing import Optional
 
 # 添加当前目录到Python路径
-current_dir = os.path.dirname(os.path.abspath(__file__))
+try:
+    _bundle_dir = getattr(sys, "_MEIPASS", None)
+except Exception:
+    _bundle_dir = None
+current_dir = _bundle_dir if _bundle_dir else os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, current_dir)
 
 try:
@@ -1998,7 +2003,8 @@ class MainWindow(QMainWindow):
         # 创建并启动 Worker
         try:
             from src.config import Config
-            base_url = Config.QIANWEN_BASE_URL
+            # Select base_url based on model name
+            base_url = Config.MODEL_BASE_URL_MAP.get(model, Config.QIANWEN_BASE_URL)
         except Exception:
             base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
@@ -2052,8 +2058,9 @@ class MainWindow(QMainWindow):
                     "content": self._current_ai_response
                 })
 
-            # 【新增】检测自动化测试触发标记
-            self._check_autotest_trigger(self._current_ai_response)
+            in_auto_analysis = bool(getattr(self, "_in_auto_analysis", False))
+            if not in_auto_analysis:
+                self._check_autotest_trigger(self._current_ai_response)
 
             self._current_ai_response = ""
             # 分隔线
@@ -2061,6 +2068,10 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         finally:
+            try:
+                self._in_auto_analysis = False
+            except Exception:
+                pass
             self.qw_send_btn.setEnabled(True)
             self.qw_stop_btn.setEnabled(False)
 
@@ -2209,6 +2220,31 @@ class MainWindow(QMainWindow):
         do_port_scan = bool(params.get("do_port_scan", False))
         ports = params.get("ports", None)
         port_timeout = int(params.get("port_timeout", 2))
+
+        try:
+            import json
+            import time
+            trigger_key = json.dumps(
+                {
+                    "host": host,
+                    "cmd": cmd,
+                    "do_port_scan": do_port_scan,
+                    "ports": ports,
+                    "port_timeout": port_timeout,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            now_ts = time.time()
+            last_key = getattr(self, "_last_ai_trigger_key", None)
+            last_ts = float(getattr(self, "_last_ai_trigger_ts", 0.0) or 0.0)
+            if last_key == trigger_key and (now_ts - last_ts) < 8.0:
+                self._log_ai_exec("permission_deny", "检测到重复触发请求，已忽略")
+                return
+            self._last_ai_trigger_key = trigger_key
+            self._last_ai_trigger_ts = now_ts
+        except Exception:
+            pass
 
         # 权限通过
         self._log_ai_exec("permission_pass", "权限验证通过，调用 AutoTestWorker（高级功能）")
@@ -2504,6 +2540,7 @@ class MainWindow(QMainWindow):
         self._log_ai_exec("call_info", f"启动自动分析 (模型: {model})")
 
         try:
+            self._in_auto_analysis = True
             self._qianwen_worker = QianwenWorker(
                 api_key=api_key,
                 model=model,
@@ -2516,6 +2553,10 @@ class MainWindow(QMainWindow):
             self._qianwen_worker.start()
             self._log_ai_exec("call_result", "自动分析已启动")
         except Exception as e:
+            try:
+                self._in_auto_analysis = False
+            except Exception:
+                pass
             self._log_ai_exec("permission_deny", f"启动自动分析失败: {e}")
             self.qw_send_btn.setEnabled(True)
 

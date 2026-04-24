@@ -95,6 +95,33 @@ python poc_tool.py generate packet.txt CVE_2024_1234
 python poc_gui.py
 ```
 
+Windows一键启动（推荐给同学使用）：
+
+```bash
+start.bat
+```
+
+或使用PowerShell版本：
+
+```powershell
+./start.ps1
+```
+
+说明：脚本会自动创建 .venv 虚拟环境、安装 requirements.txt 依赖并启动GUI。
+
+Windows打包发布（生成exe）：
+
+```powershell
+./build_exe.ps1
+```
+
+打包产物在 dist 目录下。打包脚本会把 assets、payloads、fingerprint_cve_mapping.json、ai_config.json 一并打入发布包。
+
+常见问题：
+- PowerShell 提示无法运行脚本时，可在当前窗口执行：Set-ExecutionPolicy -Scope Process Bypass
+- 杀毒软件可能会误报打包后的exe，建议将项目目录加入信任区或使用未打包的 start.bat 运行
+- 若提示缺少运行库，可安装 Microsoft Visual C++ Redistributable（与系统架构一致）
+
 GUI提供以下功能标签页：
 - **Payload测试**: 手动发送Payload
 - **脚本生成**: 从HTTP数据包生成Payload模块

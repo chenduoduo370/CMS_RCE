@@ -1,7 +1,7 @@
 {
   "969019288afc81908e3222f1811d6f0c": {
     "fingerprint": "969019288afc81908e3222f1811d6f0c",
-    "cve_id": "CVE-2019-6340",
+    "cve_id": "CVE-2018-7600",
     "description": null
   },
   "52c97059efbbf12550a2c4120df1944d": {
@@ -22,6 +22,16 @@
   "c9b3c51ac7af7f38488236de28b803b4": {
     "fingerprint": "c9b3c51ac7af7f38488236de28b803b4",
     "cve_id": "CVE-2019-6340",
+    "description": null
+  },
+  "0590ea7d6a1e78c930114878d6e7d107": {
+    "fingerprint": "0590ea7d6a1e78c930114878d6e7d107",
+    "cve_id": "CVE-2018-7600",
+    "description": null
+  },
+  "af7b14c197c1a1ae684d7a0f27776490": {
+    "fingerprint": "af7b14c197c1a1ae684d7a0f27776490",
+    "cve_id": "CVE-2018-7600",
     "description": null
   }
 }

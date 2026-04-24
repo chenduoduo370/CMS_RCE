@@ -62,15 +62,41 @@ class Config:
         """获取指纹映射文件的绝对路径"""
         return cls.PROJECT_ROOT / cls.FINGERPRINT_MAPPING_FILE
 
-    # ==================== 千问 AI 配置 ====================
-    # 阿里云千问兼容 OpenAI API 的 Base URL
+    # ==================== AI API Configuration ====================
+    # Qianwen (Alibaba Cloud) OpenAI-compatible API Base URL
     QIANWEN_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
-    # 支持的模型列表（用于 GUI 下拉框）
-    QIANWEN_MODELS = ["qwen-plus", "qwen-turbo", "qwen-max"]
+    # ZhipuAI (GLM) OpenAI-compatible API Base URL
+    ZHIPU_BASE_URL = "https://open.bigmodel.cn/api/paas/v4/"
 
-    # 默认模型
+    # Supported models list (for GUI dropdown)
+    # Format: "provider:model" for backend routing
+    AI_MODELS = [
+        "qwen-plus",
+        "qwen-turbo",
+        "qwen-max",
+        "glm-4",
+        "glm-4-flash",
+        "glm-4-plus",
+        "glm-5",
+    ]
+
+    # Legacy alias for backward compatibility
+    QIANWEN_MODELS = ["qwen-plus", "qwen-turbo", "qwen-max", "glm-4", "glm-4-flash", "glm-4-plus", "glm-5"]
+
+    # Default model
     QIANWEN_DEFAULT_MODEL = "qwen-plus"
+
+    # Model to base_url mapping
+    MODEL_BASE_URL_MAP = {
+        "qwen-plus": QIANWEN_BASE_URL,
+        "qwen-turbo": QIANWEN_BASE_URL,
+        "qwen-max": QIANWEN_BASE_URL,
+        "glm-4": ZHIPU_BASE_URL,
+        "glm-4-flash": ZHIPU_BASE_URL,
+        "glm-4-plus": ZHIPU_BASE_URL,
+        "glm-5": ZHIPU_BASE_URL,
+    }
 
     # 配置文件路径（相对项目根目录，保存用户的 API Key）
     AI_CONFIG_FILE = "ai_config.json"

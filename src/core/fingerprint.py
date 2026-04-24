@@ -541,6 +541,242 @@ def get_resources_fingerprint_from_page(
         raise NetworkError(f"请求失败: {page_url} - {e}")
 
 
+def extract_page_features(html_content: str, url: str) -> Dict[str, any]:
+    """
+    Extract page features for fingerprinting (forms, titles, specific HTML patterns)
+    Used when no CSS/JS resources are available.
+
+    Args:
+        html_content: HTML page content
+        url: Base URL for reference
+
+    Returns:
+        Dictionary containing page features:
+        {
+            'title': str,
+            'forms': [{'action': str, 'method': str, 'fields': [str], 'enctype': str}],
+            'headings': [str],
+            'meta_tags': [{'name': str, 'content': str}],
+            'scripts_inline': int,
+            'comments': [str],
+            'signature_hash': str,  # MD5 of combined features
+        }
+    """
+    features = {
+        'title': '',
+        'forms': [],
+        'headings': [],
+        'meta_tags': [],
+        'scripts_inline': 0,
+        'comments': [],
+        'signature_hash': None,
+    }
+
+    # Extract title
+    title_match = re.search(r'<title[^>]*>(.*?)</title>', html_content, re.IGNORECASE | re.DOTALL)
+    if title_match:
+        features['title'] = title_match.group(1).strip()
+
+    # Extract forms with details
+    form_pattern = r'<form[^>]*>(.*?)</form>'
+    for form_match in re.finditer(form_pattern, html_content, re.IGNORECASE | re.DOTALL):
+        form_html = form_match.group(0)
+        form_info = {
+            'action': '',
+            'method': 'GET',
+            'enctype': '',
+            'fields': [],
+        }
+
+        # Extract form attributes
+        action_match = re.search(r'action=["\']?([^"\'>\s]+)["\']?', form_html, re.IGNORECASE)
+        if action_match:
+            form_info['action'] = action_match.group(1)
+
+        method_match = re.search(r'method=["\']?([^"\'>\s]+)["\']?', form_html, re.IGNORECASE)
+        if method_match:
+            form_info['method'] = method_match.group(1).upper()
+
+        enctype_match = re.search(r'enctype=["\']?([^"\'>\s]+)["\']?', form_html, re.IGNORECASE)
+        if enctype_match:
+            form_info['enctype'] = enctype_match.group(1)
+
+        # Extract input field names
+        for input_match in re.finditer(r'<input[^>]*name=["\']?([^"\'>\s]+)["\']?', form_html, re.IGNORECASE):
+            form_info['fields'].append(input_match.group(1))
+
+        # Extract textarea names
+        for textarea_match in re.finditer(r'<textarea[^>]*name=["\']?([^"\'>\s]+)["\']?', form_html, re.IGNORECASE):
+            form_info['fields'].append(textarea_match.group(1))
+
+        features['forms'].append(form_info)
+
+    # Extract headings
+    for h_match in re.finditer(r'<h[1-6][^>]*>(.*?)</h[1-6]>', html_content, re.IGNORECASE | re.DOTALL):
+        heading_text = re.sub(r'<[^>]+>', '', h_match.group(1)).strip()
+        if heading_text:
+            features['headings'].append(heading_text)
+
+    # Extract meta tags
+    for meta_match in re.finditer(r'<meta[^>]*>', html_content, re.IGNORECASE):
+        meta_html = meta_match.group(0)
+        meta_info = {}
+        name_match = re.search(r'name=["\']?([^"\'>\s]+)["\']?', meta_html, re.IGNORECASE)
+        content_match = re.search(r'content=["\']?([^"\']*)["\']?', meta_html, re.IGNORECASE)
+        if name_match and content_match:
+            meta_info['name'] = name_match.group(1)
+            meta_info['content'] = content_match.group(1)
+            features['meta_tags'].append(meta_info)
+
+    # Count inline scripts
+    features['scripts_inline'] = len(re.findall(r'<script[^>]*>(?!</script>).*?</script>', html_content, re.IGNORECASE | re.DOTALL))
+
+    # Extract HTML comments
+    for comment_match in re.finditer(r'<!--(.*?)-->', html_content, re.DOTALL):
+        comment = comment_match.group(1).strip()
+        if comment:
+            features['comments'].append(comment)
+
+    # Generate signature hash from combined features
+    signature_parts = []
+    if features['title']:
+        signature_parts.append(f"title:{features['title']}")
+    for form in features['forms']:
+        signature_parts.append(f"form:{form['method']}:{form['action']}:{','.join(sorted(form['fields']))}")
+    for heading in features['headings']:
+        signature_parts.append(f"h:{heading}")
+
+    if signature_parts:
+        signature_str = '|'.join(signature_parts)
+        features['signature_hash'] = hashlib.md5(signature_str.encode('utf-8')).hexdigest()
+
+    return features
+
+
+def match_page_features_to_cve(features: Dict[str, any], cve_manager=None) -> List[Dict[str, str]]:
+    """
+    Match page features to known CVE patterns.
+
+    Args:
+        features: Page features from extract_page_features
+        cve_manager: CVE mapping manager (optional)
+
+    Returns:
+        List of matched CVEs with confidence:
+        [{'cve_id': str, 'confidence': str, 'reason': str}]
+    """
+    matches = []
+
+    # PHPMailer vulnerable form pattern (CVE-2016-10033)
+    # Characteristics: form with enctype="multipart/form-data", email field, vulnerable mail form title
+    for form in features.get('forms', []):
+        form_fields = set(form.get('fields', []))
+
+        # PHPMailer pattern: name, email, message fields with multipart form
+        if form_fields >= {'name', 'email', 'message'}:
+            if 'multipart/form-data' in form.get('enctype', '').lower():
+                matches.append({
+                    'cve_id': 'CVE-2016-10033',
+                    'confidence': 'high',
+                    'reason': 'PHPMailer vulnerable form detected (multipart form with name/email/message fields)'
+                })
+
+        # Alternative PHPMailer pattern: just email field with submit
+        elif 'email' in form_fields and features.get('title', '').lower().find('mail') >= 0:
+            matches.append({
+                'cve_id': 'CVE-2016-10033',
+                'confidence': 'medium',
+                'reason': 'Mail form with email field detected'
+            })
+
+    # Drupal patterns (CVE-2018-7600, CVE-2019-6340)
+    title_lower = features.get('title', '').lower()
+    headings_lower = ' '.join(features.get('headings', [])).lower()
+
+    if 'drupal' in title_lower or 'drupal' in headings_lower:
+        matches.append({
+            'cve_id': 'CVE-2018-7600',
+            'confidence': 'medium',
+            'reason': 'Drupal detected in page title/headings'
+        })
+        matches.append({
+            'cve_id': 'CVE-2019-6340',
+            'confidence': 'medium',
+            'reason': 'Drupal detected in page title/headings'
+        })
+
+    # Check signature hash in CVE mapping if available
+    if cve_manager and features.get('signature_hash'):
+        cve_id = cve_manager.get_cve(features['signature_hash'])
+        if cve_id:
+            matches.append({
+                'cve_id': cve_id,
+                'confidence': 'high',
+                'reason': f'Signature hash matched: {features["signature_hash"]}'
+            })
+
+    return matches
+
+
+def get_page_feature_fingerprint(url: str, timeout: float = None) -> Dict[str, any]:
+    """
+    Get page feature fingerprint for targets without CSS/JS resources.
+
+    Args:
+        url: Target URL
+        timeout: Request timeout in seconds
+
+    Returns:
+        Dictionary with page features and matched CVEs:
+        {
+            'features': {...},
+            'matched_cves': [...],
+        }
+    """
+    if timeout is None:
+        timeout = Config.FINGERPRINT_TIMEOUT
+
+    result = {
+        'features': {},
+        'matched_cves': [],
+    }
+
+    try:
+        headers = {'User-Agent': Config.DEFAULT_USER_AGENT}
+        response = requests.get(
+            url,
+            timeout=timeout,
+            verify=Config.VERIFY_SSL,
+            allow_redirects=True,
+            headers=headers
+        )
+
+        if response.status_code != 200:
+            return result
+
+        html_content = response.text
+
+        # Extract page features
+        features = extract_page_features(html_content, url)
+        result['features'] = features
+
+        # Get CVE manager if available
+        cve_manager = _get_cve_manager() if _get_cve_manager else None
+
+        # Match features to CVEs
+        matched = match_page_features_to_cve(features, cve_manager)
+        result['matched_cves'] = matched
+
+        return result
+
+    except requests.exceptions.Timeout:
+        raise NetworkError(f"Request timeout: {url}")
+    except requests.exceptions.ConnectionError:
+        raise NetworkError(f"Connection failed: {url}")
+    except requests.exceptions.RequestException as e:
+        raise NetworkError(f"Request failed: {url} - {e}")
+
+
 def get_comprehensive_fingerprint(url: str, timeout: float = None) -> Dict[str, any]:
     """
     获取目标的综合指纹信息
@@ -595,6 +831,9 @@ __all__ = [
     "get_css_files_md5_from_page",
     "get_resources_fingerprint_from_page",
     "get_comprehensive_fingerprint",
+    "extract_page_features",
+    "match_page_features_to_cve",
+    "get_page_feature_fingerprint",
     "FingerprintError",
     "NetworkError",
 ]
